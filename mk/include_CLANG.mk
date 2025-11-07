@@ -5,8 +5,7 @@ else
 CC   = cc
 endif
 
-GCC  = cc
-LINKER = $(CC)
+LD = $(CC)
 
 ifeq ($(ENABLE_OPENMP),true)
 OPENMP   = -fopenmp
@@ -15,7 +14,7 @@ LIBS     = # -lomp
 endif
 
 VERSION  = --version
-CFLAGS   = -Ofast -std=c17
+CFLAGS   = -O3 -ffast-math -std=c99
 LFLAGS   = $(OPENMP) -lm
 DEFINES  += -D_GNU_SOURCE# -DDEBUG
 INCLUDES = -I/opt/homebrew/include

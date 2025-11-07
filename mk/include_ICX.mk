@@ -5,8 +5,7 @@ else
 CC = icx
 endif
 
-GCC = gcc
-LINKER = $(CC)
+LD = $(CC)
 
 ifeq ($(ENABLE_OPENMP),true)
 OPENMP   = -qopenmp

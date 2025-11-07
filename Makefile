@@ -1,43 +1,49 @@
-#=======================================================================================
 # Copyright (C) NHR@FAU, University Erlangen-Nuremberg.
 # All rights reserved.
 # Use of this source code is governed by a MIT-style
 # license that can be found in the LICENSE file.
-#=======================================================================================
 
 #CONFIGURE BUILD SYSTEM
-TARGET	   = exe-$(TAG)
-BUILD_DIR  = ./$(TAG)
+TARGET	   = bwbench-$(TOOLCHAIN)
+BUILD_DIR  = ./build/$(TOOLCHAIN)
 SRC_DIR    = ./src
-MAKE_DIR   = ./
+MAKE_DIR   = ./mk
 Q         ?= @
 
 #DO NOT EDIT BELOW
-include $(MAKE_DIR)/config.mk
-include $(MAKE_DIR)/include_$(TAG).mk
+include config.mk
+include $(MAKE_DIR)/include_$(TOOLCHAIN).mk
 INCLUDES  += -I$(SRC_DIR) -I$(BUILD_DIR)
 
 VPATH     = $(SRC_DIR)
-SRC       = $(filter-out $(wildcard $(SRC_DIR)/*-*.c),$(wildcard $(SRC_DIR)/*.c))
-ASM       = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.s, $(SRC))
-OBJ       = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRC))
+ASM       = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.s, $(wildcard $(SRC_DIR)/*.c))
+OBJ       = $(filter-out $(BUILD_DIR)/vtkWriter-%.o $(BUILD_DIR)/solver-%.o, $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(wildcard $(SRC_DIR)/*.c)))
 OBJ      += $(BUILD_DIR)/vtkWriter-$(VTK_OUTPUT_FMT).o
 OBJ      += $(BUILD_DIR)/solver-$(SOLVER).o
-SOURCES   = $(SRC) $(wildcard $(SRC_DIR)/*.h)
+
 ifeq ($(VTK_OUTPUT_FMT),mpi)
 DEFINES  += -D_VTK_WRITER_MPI
 endif
-
+SRC       =  $(wildcard $(SRC_DIR)/*.h $(SRC_DIR)/*.c)
 CPPFLAGS := $(CPPFLAGS) $(DEFINES) $(OPTIONS) $(INCLUDES)
+c := ,
+clist = $(subst $(eval) ,$c,$(strip $1))
 
-${TARGET}: sanity-checks $(BUILD_DIR) $(OBJ)
+define CLANGD_TEMPLATE
+CompileFlags:
+  Add: [$(call clist,$(CPPFLAGS)), $(call clist,$(CFLAGS)), -xc]
+  Compiler: clang
+endef
+
+${TARGET}: sanity-checks $(BUILD_DIR) .clangd $(OBJ)
 	$(info ===>  LINKING  $(TARGET))
-	$(Q)${LINKER} ${LFLAGS} -o $(TARGET) $(OBJ) $(LIBS)
+	$(Q)${LD} ${LFLAGS} -o $(TARGET) $(OBJ) $(LIBS)
 
-$(BUILD_DIR)/%.o:  %.c $(MAKE_DIR)/include_$(TAG).mk $(MAKE_DIR)/config.mk
+$(BUILD_DIR)/%.o:  %.c $(MAKE_DIR)/include_$(TOOLCHAIN).mk config.mk
 	$(info ===>  COMPILE  $@)
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
-	$(Q)$(GCC) $(CPPFLAGS) -MT $(@:.d=.o) -MM  $< > $(BUILD_DIR)/$*.d
+	$(Q)$(CC) $(CPPFLAGS) -MT $(@:.d=.o) -MM  $< > $(BUILD_DIR)/$*.d
+
 
 $(BUILD_DIR)/%.s:  %.c
 	$(info ===>  GENERATE ASM  $@)
@@ -58,11 +64,12 @@ vis_clean:
 clean: vis_clean
 	$(info ===>  CLEAN)
 	@rm -rf $(BUILD_DIR)
-	@rm -f tags
 
 distclean: clean
 	$(info ===>  DIST CLEAN)
+	@rm -rf build
 	@rm -f $(TARGET)
+	@rm -f tags .clangd compile_commands.json
 
 info:
 	$(info $(CFLAGS))
@@ -70,12 +77,9 @@ info:
 
 asm:  $(BUILD_DIR) $(ASM)
 
-tags:
-	$(info ===>  GENERATE TAGS)
-	$(Q)ctags -R
 
 format:
-	@for src in $(SOURCES) ; do \
+	@for src in $(SRC) ; do \
 		echo "Formatting $$src" ; \
 		clang-format -i $$src ; \
 	done
@@ -88,8 +92,10 @@ ifeq ($(ENABLE_MPI),false)
 endif
 endif
 
-
 $(BUILD_DIR):
-	@mkdir $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)
+
+.clangd:
+	$(file > .clangd,$(CLANGD_TEMPLATE))
 
 -include $(OBJ:.o=.d)
