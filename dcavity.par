@@ -1,0 +1,59 @@
+#==============================================================================
+#                              Driven Cavity
+#==============================================================================
+
+# Problem specific Data:
+# ---------------------
+
+name dcavity        # name of flow setup
+
+bcLeft    1			#  flags for boundary conditions
+bcRight   1			#  1 = no-slip      3 = outflow
+bcBottom  1			#  2 = free-slip    4 = periodic
+bcTop     1			#
+bcFront   1			#
+bcBack    1			#
+
+gx    0.0			# Body forces (e.g. gravity)
+gy    0.0			#
+gz    0.0			#
+
+re    1000.0		# Reynolds number
+
+u_init    0.0		# initial value for velocity in x-direction
+v_init    0.0		# initial value for velocity in y-direction
+w_init    0.0		# initial value for velocity in z-direction
+p_init    0.0		# initial value for pressure
+
+# Geometry Data:
+# -------------
+
+xlength    1.0		# domain size in x-direction
+ylength    1.0		# domain size in y-direction
+zlength    1.0		# domain size in z-direction
+imax       128		# number of interior cells in x-direction
+jmax       128		# number of interior cells in y-direction
+kmax       128		# number of interior cells in z-direction
+
+# Time Data:
+# ---------
+
+te       10.0		# final time
+dt       0.02	    # time stepsize
+tau      0.5		# safety factor for time stepsize control (<0 constant delt)
+
+# Multigrid data:
+# ---------
+
+levels        3         # Multigrid levels
+presmooth     20        # Pre-smoothning iterations
+postsmooth    5         # Post-smoothning iterations
+
+# Pressure Iteration Data:
+# -----------------------
+
+itermax  1000		# maximal number of pressure iteration in one time step
+eps      0.001		# stopping tolerance for pressure iteration
+omg      1.8		# relaxation parameter for SOR iteration
+gamma    0.9		# upwind differencing factor gamma
+#===============================================================================
