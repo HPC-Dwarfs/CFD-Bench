@@ -4,7 +4,7 @@
 # license that can be found in the LICENSE file.
 
 #CONFIGURE BUILD SYSTEM
-TARGET	   = bwbench-$(TOOLCHAIN)
+TARGET	   = NusifSolver-$(TOOLCHAIN)
 BUILD_DIR  = ./build/$(TOOLCHAIN)
 SRC_DIR    = ./src
 MAKE_DIR   = ./mk
@@ -16,10 +16,10 @@ include $(MAKE_DIR)/include_$(TOOLCHAIN).mk
 INCLUDES  += -I$(SRC_DIR) -I$(BUILD_DIR)
 
 VPATH     = $(SRC_DIR)
-ASM       = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.s, $(wildcard $(SRC_DIR)/*.c))
 OBJ       = $(filter-out $(BUILD_DIR)/vtkWriter-%.o $(BUILD_DIR)/solver-%.o, $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(wildcard $(SRC_DIR)/*.c)))
 OBJ      += $(BUILD_DIR)/vtkWriter-$(VTK_OUTPUT_FMT).o
 OBJ      += $(BUILD_DIR)/solver-$(SOLVER).o
+ASM       = $(patsubst $(BUILD_DIR)/%.o, $(BUILD_DIR)/%.s, $(OBJ))
 
 ifeq ($(VTK_OUTPUT_FMT),mpi)
 DEFINES  += -D_VTK_WRITER_MPI
@@ -44,24 +44,17 @@ $(BUILD_DIR)/%.o:  %.c $(MAKE_DIR)/include_$(TOOLCHAIN).mk config.mk
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
 	$(Q)$(CC) $(CPPFLAGS) -MT $(@:.d=.o) -MM  $< > $(BUILD_DIR)/$*.d
 
-
 $(BUILD_DIR)/%.s:  %.c
 	$(info ===>  GENERATE ASM  $@)
 	$(CC) -S $(CPPFLAGS) $(CFLAGS) $< -o $@
 
-.PHONY: clean distclean vis vis_clean tags info asm format
+.PHONY: clean distclean info asm format plot
 
-vis:
-	$(info ===>  GENERATE VISUALIZATION)
+plot:
+	$(info ===>  GENERATE PLOT)
 	@gnuplot -e "filename='residual.dat'" ./residual.plot
 
-vis_clean:
-	$(info ===>  CLEAN VISUALIZATION)
-	@rm -f *.dat
-	@rm -f *.vtk
-	@rm -f *.png
-
-clean: vis_clean
+clean:
 	$(info ===>  CLEAN)
 	@rm -rf $(BUILD_DIR)
 
@@ -70,13 +63,16 @@ distclean: clean
 	@rm -rf build
 	@rm -f $(TARGET)
 	@rm -f tags .clangd compile_commands.json
+	@rm -f *.dat
+	@rm -f *.vtk
+	@rm -f *.png
 
 info:
-	$(info $(CFLAGS))
+	$(info Nusif-Solver v1.0)
+	$(info Flags: $(CFLAGS))
 	$(Q)$(CC) $(VERSION)
 
 asm:  $(BUILD_DIR) $(ASM)
-
 
 format:
 	@for src in $(SRC) ; do \

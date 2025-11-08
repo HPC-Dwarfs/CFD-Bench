@@ -1,9 +1,7 @@
-/*
- * Copyright (C)  NHR@FAU, University Erlangen-Nuremberg.
- * All rights reserved. This file is part of nusif-solver.
+/* Copyright (C) NHR@FAU, University Erlangen-Nuremberg.
+ * All rights reserved. This file is part of NuSiF solver.
  * Use of this source code is governed by a MIT style
- * license that can be found in the LICENSE file.
- */
+ * license that can be found in the LICENSE file. */
 #ifndef __SOLVER_H_
 #define __SOLVER_H_
 #include "comm.h"

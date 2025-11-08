@@ -1,9 +1,7 @@
-/*
- * Copyright (C)  NHR@FAU, University Erlangen-Nuremberg.
- * All rights reserved. This file is part of nusif-solver.
+/* Copyright (C) NHR@FAU, University Erlangen-Nuremberg.
+ * All rights reserved. This file is part of NuSiF solver.
  * Use of this source code is governed by a MIT style
- * license that can be found in the LICENSE file.
- */
+ * license that can be found in the LICENSE file. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,7 +42,10 @@ void readParameter(Parameter *param, const char *filename)
 
     while (!feof(fp)) {
         line[0] = '\0';
-        fgets(line, MAXLINE, fp);
+        if (fgets(line, MAXLINE, fp) == NULL && ferror(fp) != 0) {
+            fprintf(stderr, "Error in fgets function\n");
+        }
+
         for (i = 0; line[i] != '\0' && line[i] != '#'; i++)
             ;
         line[i]   = '\0';

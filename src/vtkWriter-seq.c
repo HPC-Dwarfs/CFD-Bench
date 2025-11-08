@@ -1,15 +1,13 @@
-/*
- * Copyright (C)  NHR@FAU, University Erlangen-Nuremberg.
- * All rights reserved. This file is part of nusif-solver.
+/* Copyright (C) NHR@FAU, University Erlangen-Nuremberg.
+ * All rights reserved. This file is part of NuSiF solver.
  * Use of this source code is governed by a MIT style
- * license that can be found in the LICENSE file.
- */
+ * license that can be found in the LICENSE file. */
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "vtkWriter.h"
-#define G(v, i, j, k) v[(k)*imax * jmax + (j)*imax + (i)]
+#define G(v, i, j, k) v[(k) * imax * jmax + (j) * imax + (i)]
 
 static double floatSwap(double f)
 {
@@ -30,7 +28,7 @@ static double floatSwap(double f)
     return dat2.f;
 }
 
-static void writeHeader(VtkOptions* o)
+static void writeHeader(VtkOptions *o)
 {
     fprintf(o->fh, "# vtk DataFile Version 3.0\n");
     fprintf(o->fh, "PAMPI cfd solver output\n");
@@ -51,7 +49,7 @@ static void writeHeader(VtkOptions* o)
     fprintf(o->fh, "POINT_DATA %d\n", o->grid->imax * o->grid->jmax * o->grid->kmax);
 }
 
-void vtkOpen(VtkOptions* o, char* problem)
+void vtkOpen(VtkOptions *o, char *problem)
 {
     char filename[50];
 
@@ -62,7 +60,7 @@ void vtkOpen(VtkOptions* o, char* problem)
     printf("Writing VTK output for %s\n", problem);
 }
 
-static void writeScalar(VtkOptions* o, double* s)
+static void writeScalar(VtkOptions *o, double *s)
 {
     int imax = o->grid->imax;
     int jmax = o->grid->jmax;
@@ -82,10 +80,11 @@ static void writeScalar(VtkOptions* o, double* s)
             }
         }
     }
-    if (o->fmt == BINARY) fprintf(o->fh, "\n");
+    if (o->fmt == BINARY)
+        fprintf(o->fh, "\n");
 }
 
-static bool isInitialized(FILE* ptr)
+static bool isInitialized(FILE *ptr)
 {
     if (ptr == NULL) {
         printf("vtkWriter not initialize! Call vtkOpen first!\n");
@@ -94,16 +93,17 @@ static bool isInitialized(FILE* ptr)
     return true;
 }
 
-void vtkScalar(VtkOptions* o, char* name, double* s)
+void vtkScalar(VtkOptions *o, char *name, double *s)
 {
     printf("Register scalar %s\n", name);
-    if (!isInitialized(o->fh)) return;
+    if (!isInitialized(o->fh))
+        return;
     fprintf(o->fh, "SCALARS %s double 1\n", name);
     fprintf(o->fh, "LOOKUP_TABLE default\n");
     writeScalar(o, s);
 }
 
-static void writeVector(VtkOptions* o, VtkVector vec)
+static void writeVector(VtkOptions *o, VtkVector vec)
 {
     int imax = o->grid->imax;
     int jmax = o->grid->jmax;
@@ -129,18 +129,20 @@ static void writeVector(VtkOptions* o, VtkVector vec)
             }
         }
     }
-    if (o->fmt == BINARY) fprintf(o->fh, "\n");
+    if (o->fmt == BINARY)
+        fprintf(o->fh, "\n");
 }
 
-void vtkVector(VtkOptions* o, char* name, VtkVector vec)
+void vtkVector(VtkOptions *o, char *name, VtkVector vec)
 {
     printf("Register vector %s\n", name);
-    if (!isInitialized(o->fh)) return;
+    if (!isInitialized(o->fh))
+        return;
     fprintf(o->fh, "VECTORS %s double\n", name);
     writeVector(o, vec);
 }
 
-void vtkClose(VtkOptions* o)
+void vtkClose(VtkOptions *o)
 {
     fclose(o->fh);
     o->fh = NULL;
