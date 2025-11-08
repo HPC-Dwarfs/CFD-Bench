@@ -1,7 +1,7 @@
 # Supported: GCC, CLANG, ICX
 TOOLCHAIN ?= CLANG
 # Supported: true, false
-ENABLE_MPI ?= true
+ENABLE_MPI ?= false
 ENABLE_OPENMP ?= false
 # Supported: rb, mg
 SOLVER ?= rb
