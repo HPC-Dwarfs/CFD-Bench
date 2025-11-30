@@ -102,7 +102,7 @@ void initDiscretization(Discretization *s, Parameter *params)
     int kmaxLocal = s->comm.kmaxLocal;
     size_t size   = (imaxLocal + 2) * (jmaxLocal + 2) * (kmaxLocal + 2);
 
-    s->u          = allocate(64, size * sizeof(double));
+    s->u          = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
     s->v          = allocate(64, size * sizeof(double));
     s->w          = allocate(64, size * sizeof(double));
     s->p          = allocate(64, size * sizeof(double));

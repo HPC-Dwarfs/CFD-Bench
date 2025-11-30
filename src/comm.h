@@ -15,9 +15,9 @@
  * All derived Subarray types are in C ordering
  * with indices KDIM (0), JDIM(1) and IDIM(2)
  * */
-typedef enum direction { LEFT = 0, RIGHT, BOTTOM, TOP, FRONT, BACK, NDIRS } Direction;
-typedef enum coordinates { ICORD = 0, JCORD, KCORD, NCORDS } Coordinates;
-typedef enum dimension { KDIM = 0, JDIM, IDIM, NDIMS } Dimension;
+typedef enum direction { LEFT = 0, RIGHT, BOTTOM, TOP, FRONT, BACK, NDIRS } DirectionType;
+typedef enum coordinates { ICORD = 0, JCORD, KCORD, NCORDS } CoordinatesType;
+typedef enum dimension { KDIM = 0, JDIM, IDIM, NDIMS } DimensionType;
 enum layer { HALO = 0, BULK };
 enum op { MAX = 0, SUM };
 
@@ -32,21 +32,21 @@ typedef struct {
     int neighbours[NDIRS];
     int coords[NDIMS], dims[NDIMS];
     int imaxLocal, jmaxLocal, kmaxLocal;
-} Comm;
+} CommType;
 
-extern void commInit(Comm *c, int argc, char **argv);
-extern void commPartition(Comm *c, int kmax, int jmax, int imax);
-extern void commFinalize(Comm *comm);
-extern void commPrintConfig(Comm *);
-extern void commExchange(Comm *, double *);
-extern void commShift(Comm *c, double *f, double *g, double *h);
+extern void commInit(CommType *c, int argc, char **argv);
+extern void commPartition(CommType *c, int kmax, int jmax, int imax);
+extern void commFinalize(CommType *comm);
+extern void commPrintConfig(CommType *);
+extern void commExchange(CommType *, double *);
+extern void commShift(CommType *c, double *f, double *g, double *h);
 extern void commReduction(double *v, int op);
-extern int commIsBoundary(Comm *c, Direction direction);
-extern void commGetOffsets(Comm *c, int offsets[], int kmax, int jmax, int imax);
-extern void commFreeCommunicator(Comm *comm);
+extern int commIsBoundary(CommType *c, DirectionType direction);
+extern void commGetOffsets(CommType *c, int offsets[], int kmax, int jmax, int imax);
+extern void commFreeCommunicator(CommType *comm);
 extern void commUpdateDatatypes(
-    Comm *oldcomm, Comm *newcomm, int imaxLocal, int jmaxLocal, int kmaxLocal);
-extern void commCollectResult(Comm *c,
+    CommType *oldcomm, CommType *newcomm, int imaxLocal, int jmaxLocal, int kmaxLocal);
+extern void commCollectResult(CommType *c,
     double *ug,
     double *vg,
     double *wg,
@@ -59,7 +59,7 @@ extern void commCollectResult(Comm *c,
     int jmax,
     int imax);
 
-static inline int commIsMaster(Comm *c)
+static inline bool commIsMaster(CommType *c)
 {
     return c->rank == 0;
 }
