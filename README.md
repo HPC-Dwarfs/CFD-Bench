@@ -9,6 +9,13 @@ application.
 
 ## Infos
 
+The solver uses Chorin's projection method, which is explicit in the velocities
+and implicit in the pressure. The physical quantities are stored on a staggered
+grid. The pressure is stored in the cell center and the velocities at its faces.
+For the discretization of the time derivative Euler's method is used. The
+derivatives are discretized using central differences, for the convective terms
+the Donor cell differencing schema is used.
+
 ### Preconfigured tool chains
 
 - GCC
@@ -17,10 +24,18 @@ application.
 
 ### Parallelism
 
+- Sequential
 - MPI
 - OpenMP
 
-### Solvers
+## MPI primitives
+
+- Derived datatypes
+- Cartesian topology
+- Neighborhood collectives
+- MPI IO
+
+### Equation Solvers
 
 - Red-Black SOR
 - Geometric Multigrid

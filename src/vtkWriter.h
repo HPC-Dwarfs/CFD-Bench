@@ -12,18 +12,18 @@
 typedef enum VtkFormat { ASCII = 0, BINARY } VtkFormat;
 
 typedef struct VtkOptions {
-    Grid *grid;
+  Grid *grid;
 #ifdef _VTK_WRITER_MPI
-    MPI_File fh;
+  MPI_File fh;
 #else
-    FILE *fh;
-    VtkFormat fmt;
+  FILE *fh;
+  VtkFormat fmt;
 #endif // _VTK_WRITER_MPI
-    Comm comm;
+  Comm comm;
 } VtkOptions;
 
 typedef struct VtkVector {
-    double *u, *v, *w;
+  double *u, *v, *w;
 } VtkVector;
 
 extern void vtkOpen(VtkOptions *opts, char *filename);

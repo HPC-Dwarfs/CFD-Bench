@@ -6,6 +6,7 @@ AlignOperands: Align
 ColumnLimit: 90
 BreakBeforeBinaryOperators: None
 PPIndentWidth: 1
+IndentWidth: 2
 RemoveParentheses: ReturnStatement
 AlignArrayOfStructures: Left
 AlignAfterOpenBracket: DontAlign

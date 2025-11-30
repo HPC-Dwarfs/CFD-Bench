@@ -16,7 +16,7 @@
 #define LIKWID_MARKER_CLOSE likwid_markerClose()
 #define LIKWID_MARKER_RESET(regionTag) likwid_markerResetRegion(regionTag)
 #define LIKWID_MARKER_GET(regionTag, nevents, events, time, count)                       \
-    likwid_markerGetRegion(regionTag, nevents, events, time, count)
+  likwid_markerGetRegion(regionTag, nevents, events, time, count)
 #else /* LIKWID_PERFMON */
 #define LIKWID_MARKER_INIT
 #define LIKWID_MARKER_THREADINIT

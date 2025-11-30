@@ -6,9 +6,9 @@
 #define __GRID_H_
 
 typedef struct {
-    double dx, dy, dz;
-    int imax, jmax, kmax;
-    double xlength, ylength, zlength;
+  double dx, dy, dz;
+  int imax, jmax, kmax;
+  double xlength, ylength, zlength;
 } Grid;
 
 #endif // __GRID_H_

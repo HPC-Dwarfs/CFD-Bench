@@ -1,0 +1,44 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/cc",
+      "-c",
+      "-D_GNU_SOURCE",
+      "-DARRAY_ALIGNMENT=64",
+      "-DVERBOSE",
+      "-I/opt/homebrew/include",
+      "-I./src",
+      "-I./build/CLANG",
+      "-O3",
+      "-ffast-math",
+      "-std=c99",
+      "-o",
+      "build/CLANG/allocate.o",
+      "./src/allocate.c"
+    ],
+    "directory": "/home/jan/prg/NuSiF-Solver",
+    "file": "/home/jan/prg/NuSiF-Solver/src/allocate.c",
+    "output": "/home/jan/prg/NuSiF-Solver/build/CLANG/allocate.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/cc",
+      "-c",
+      "-D_GNU_SOURCE",
+      "-DARRAY_ALIGNMENT=64",
+      "-DVERBOSE",
+      "-I/opt/homebrew/include",
+      "-I./src",
+      "-I./build/CLANG",
+      "-O3",
+      "-ffast-math",
+      "-std=c99",
+      "-o",
+      "build/CLANG/comm.o",
+      "./src/comm.c"
+    ],
+    "directory": "/home/jan/prg/NuSiF-Solver",
+    "file": "/home/jan/prg/NuSiF-Solver/src/comm.c",
+    "output": "/home/jan/prg/NuSiF-Solver/build/CLANG/comm.o"
+  }
+]

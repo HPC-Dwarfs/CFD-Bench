@@ -61,6 +61,7 @@ clean:
 distclean: clean
 	$(info ===>  DIST CLEAN)
 	@rm -rf build
+	@rm -rf .cache
 	@rm -f $(TARGET)
 	@rm -f tags .clangd compile_commands.json
 	@rm -f *.dat

@@ -22,16 +22,16 @@ enum layer { HALO = 0, BULK };
 enum op { MAX = 0, SUM };
 
 typedef struct {
-    int rank;
-    int size;
+  int rank;
+  int size;
 #if defined(_MPI)
-    MPI_Comm comm;
-    MPI_Datatype sbufferTypes[NDIRS];
-    MPI_Datatype rbufferTypes[NDIRS];
+  MPI_Comm comm;
+  MPI_Datatype sbufferTypes[NDIRS];
+  MPI_Datatype rbufferTypes[NDIRS];
 #endif
-    int neighbours[NDIRS];
-    int coords[NDIMS], dims[NDIMS];
-    int imaxLocal, jmaxLocal, kmaxLocal;
+  int neighbours[NDIRS];
+  int coords[NDIMS], dims[NDIMS];
+  int imaxLocal, jmaxLocal, kmaxLocal;
 } CommType;
 
 extern void commInit(CommType *c, int argc, char **argv);
@@ -61,6 +61,6 @@ extern void commCollectResult(CommType *c,
 
 static inline bool commIsMaster(CommType *c)
 {
-    return c->rank == 0;
+  return c->rank == 0;
 }
 #endif // __COMM_H_
