@@ -64,6 +64,7 @@ distclean: clean
 	@rm -rf .cache
 	@rm -f $(TARGET)
 	@rm -f tags .clangd compile_commands.json
+	@rm -f profile-*.txt
 	@rm -f *.dat
 	@rm -f *.vtk
 	@rm -f *.png
