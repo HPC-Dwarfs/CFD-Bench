@@ -1,9 +1,9 @@
 # Supported: GCC, CLANG, ICX
-TOOLCHAIN ?= ICX
+TOOLCHAIN ?= CLANG
 # Supported: true, false
 ENABLE_MPI ?= true
 ENABLE_OPENMP ?= false
-# Supported: rb, mg
+# Supported: rb, rbc, mg
 SOLVER ?= mg
 # Supported: seq, mpi
 VTK_OUTPUT_FMT ?= seq
