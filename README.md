@@ -1,22 +1,21 @@
 # NuSiF CFD Solver
 
-The NuSiF-Solver implements a 3D structured incompressible Navier Stokes solver.
-This solver uses finite difference discretization using a staggered grid as
+The NuSiF-Solver implements a 3D structured incompressible Navier-Stokes solver.
+This solver uses finite difference discretization on a staggered grid as
 described in [this book](https://epubs.siam.org/doi/10.1137/1.9780898719703) by
 Michael Griebel. The program supports sequential and MPI IO output of the
-results in VTK file format, that can be visualized using the Paraview
+results in VTK file format, which can be visualized using the ParaView
 application.
 
-## Infos
+## Overview
 
 The solver uses Chorin's projection method, which is explicit in the velocities
-and implicit in the pressure. The physical quantities are stored on a staggered
-grid. The pressure is stored in the cell center and the velocities at its faces.
-For the discretization of the time derivative Euler's method is used. The
-derivatives are discretized using central differences, for the convective terms
-the Donor cell differencing schema is used.
+and implicit in the pressure. Physical quantities are stored on a staggered
+grid: pressure at cell centers and velocities at cell faces. The time derivative
+is discretized with Euler's method. Spatial derivatives use central differences;
+the Donor cell differencing scheme is used for convective terms.
 
-### Preconfigured tool chains
+### Supported Tool Chains
 
 - GCC
 - CLANG
@@ -25,24 +24,20 @@ the Donor cell differencing schema is used.
 ### Parallelism
 
 - Sequential
-- MPI
+- MPI (derived datatypes, Cartesian topology, neighborhood collectives, MPI IO)
 - OpenMP
 
-## MPI primitives
-
-- Derived datatypes
-- Cartesian topology
-- Neighborhood collectives
-- MPI IO
-
-### Equation Solvers
+### Pressure Solvers
 
 - Red-Black SOR
+- Compressed Red-Black SOR
 - Geometric Multigrid
 
 ## Build
 
-1. Configure the tool chain and additional options in `config.mk`:
+### 1. Configure
+
+Copy or edit `config.mk` to select the tool chain and options:
 
 ```make
 # Supported: GCC, CLANG, ICX
@@ -50,12 +45,10 @@ TOOLCHAIN ?= GCC
 # Supported: true, false
 ENABLE_MPI ?= true
 ENABLE_OPENMP ?= false
-# Supported: rb, mg
+# Supported: rb, rbc, mg
 SOLVER ?= rb
 # Supported: seq, mpi
 VTK_OUTPUT_FMT ?= seq
-
-ENABLE_OPENMP ?= false
 
 OPTIONS +=  -DARRAY_ALIGNMENT=64
 #OPTIONS +=  -DVERBOSE
@@ -64,112 +57,88 @@ OPTIONS +=  -DARRAY_ALIGNMENT=64
 #OPTIONS +=  -DVERBOSE_TIMER
 ```
 
-The verbosity options enable detailed output about solver, affinity settings, allocation sizes and timer resolution.
-For debugging you may want to set the VERBOSE option:
+The verbosity options enable detailed output about the solver, affinity
+settings, allocation sizes, and timer resolution. For debugging, enable
+`-DVERBOSE`.
 
-```make
-# Supported: GCC, CLANG, ICX
-TAG ?= GCC
-# Supported: true, false
-ENABLE_MPI ?= true
-ENABLE_OPENMP ?= false
-# Supported: rb, mg
-SOLVER ?= rb
-# Supported: seq, mpi
-VTK_OUTPUT_FMT ?= seq
-
-ENABLE_OPENMP ?= false
-
-OPTIONS +=  -DARRAY_ALIGNMENT=64
-OPTIONS +=  -DVERBOSE
-#OPTIONS +=  -DVERBOSE_AFFINITY
-#OPTIONS +=  -DVERBOSE_DATASIZE
-#OPTIONS +=  -DVERBOSE_TIMER
-```
-
-1. Build with:
+### 2. Build
 
 ```sh
 make
 ```
 
-You can build multiple tool chains in the same directory, but notice that the
-Makefile is only acting on the one currently set. Intermediate build results are
-located in the `./build/<TOOLCHAIN>` directory. The executable is named
+Multiple tool chains can coexist in the same directory. Intermediate build
+results are stored in `./build/<TOOLCHAIN>/`. The executable is named
 `NusifSolver-<TOOLCHAIN>`.
 
-To output all executed commands use:
+To see all executed commands:
 
 ```sh
 make Q=
 ```
 
-1. Clean up intermediate build results of active tool chain use:
+### 3. Clean
+
+Remove intermediate build results for the active tool chain:
 
 ```sh
 make clean
 ```
 
-To clean all build results of all tool chains including all data and
-visualization output use:
+Remove all build results for all tool chains, including data and visualization
+output:
 
 ```sh
 make distclean
 ```
 
-1. (Optional) Generate assembler for all source files:
+### 4. (Optional) Generate Assembler
 
 ```sh
 make asm
 ```
 
-The assembler files will also be located in the `./build/<TOOLCHAIN>` directory.
+Assembler files are placed in `./build/<TOOLCHAIN>/`.
 
-## CLANG tooling support
+## CLANG Tooling Support
 
-The Makefile will generate a .clangd configuration to correctly set all options
-for the clang language server. This is only important if you use an editor with
-LSP support and want to edit or explore the source code. It is required to use
-GNU Make 4.0 or newer. While building with older make versions will work, the
-generation of the .clangd configuration for the clang language server will not
-work. The default Make version included in MacOS is 3.81! Newer make versions
-can be easily installed on MacOS using the Homebrew package manager. This will
-restrict LSP support for all loaded compilation units.
+The Makefile generates a `.clangd` configuration with the correct compiler
+flags for the clang language server. This requires GNU Make 4.0 or newer.
+Note: the default Make version on macOS is 3.81 — install a newer version via
+[Homebrew](https://brew.sh). Without GNU Make 4.0+, LSP support will be
+restricted to previously opened buffers.
 
-An alternative is to use [Bear](https://github.com/rizsotto/Bear), a tool that
-generates a compilation database for clang tooling. This method also will enable
-to jump to any definition without a previously opened buffer. You have to build
-one time with Bear as a wrapper:
+Alternatively, use [Bear](https://github.com/rizsotto/Bear) to generate a
+`compile_commands.json` compilation database, which also enables jump-to-definition
+without a previously opened buffer:
 
 ```sh
 bear -- make
 ```
 
 The repository includes `.clang-format` and `.clang-tidy` files to enforce
-consistent formatting and variable naming.
-
-To reformat all source files use:
+consistent formatting and naming conventions. To reformat all source files:
 
 ```sh
 make format
 ```
 
-This required `clang-format` in your `PATH`.
+This requires `clang-format` in your `PATH`.
 
 ## Usage
 
-You have to provide a parameter file describing the problem you want to solve:
+Provide a parameter file describing the problem to solve:
 
-```
-
+```sh
 ./NusifSolver-CLANG dcavity.par
-
 ```
 
-Example test cases are given in the `dcavity.par` (a lid driven cavity test
-case) and `canal.par` (simulating a empty canal) files.
+Two example test cases are included:
 
-You can plot the resulting residual as a function of iterations using:
+- `dcavity.par` — lid-driven cavity
+- `canal.par` — empty canal flow
+
+To plot the pressure solver residual as a function of iteration:
 
 ```sh
 make plot
