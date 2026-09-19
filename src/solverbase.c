@@ -8,8 +8,26 @@
  */
 #include <stddef.h>
 
+#include "profiler.h"
+#include "timing.h"
 #include "solver.h"
 #include "util.h"
+
+#ifdef PROFILING
+void pressureSweepTimes(double *bulk, double *surface)
+{
+  *bulk    = T[SWEEP_BULK];
+  *surface = T[SWEEP_SURFACE];
+}
+
+void pressureSweepTimesReset(void)
+{
+  T[SWEEP_BULK]    = 0.0;
+  T[SWEEP_SURFACE] = 0.0;
+  C[SWEEP_BULK]    = 0;
+  C[SWEEP_SURFACE] = 0;
+}
+#endif
 
 /*
  * The pressure operator, in one place.
@@ -135,6 +153,10 @@ void pressureCorrectSurface(const PressureLevelType *lv,
 
   double delta      = 0.0;
 
+#ifdef PROFILING
+  double surfaceStart = getTimeStamp();
+#endif
+
   for (int e = begin; e < end; e++) {
     int idx     = list->index[e];
     double pOld = list->saved[e];
@@ -169,6 +191,11 @@ void pressureCorrectSurface(const PressureLevelType *lv,
   }
 
   *sweepRes += delta;
+
+#ifdef PROFILING
+  T[SWEEP_SURFACE] += getTimeStamp() - surfaceStart;
+  C[SWEEP_SURFACE]++;
+#endif
 }
 
 void solverBaseInit(Solver *s, Discretization *d, Parameter *p)

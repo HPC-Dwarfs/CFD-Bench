@@ -108,10 +108,29 @@ for solver in rb rbc mg; do
         status=1
     fi
 
-    if "$ROOT/tools/fieldcmp" "$WORK/$solver-r1.dump" "$WORK/$solver-rn.dump" "$TOL"; then
-        printf '%s: same field on 1 and %s ranks\n' "$solver" "$RANKS"
+    # Judged by the L2 difference, not the largest one. A whole multi-step run
+    # cannot be bit-reproducible across rank counts and is not meant to be: the
+    # residual norm, the mean the null-space handling removes and the velocity
+    # maximum the time step comes from are all global sums, formed in an order
+    # the decomposition decides. Those differences start at machine precision
+    # and the flow amplifies them, so two runs agree closely almost everywhere
+    # and can differ by more at a single point. The equal iteration counts above
+    # are what says the solver itself is decomposition-independent.
+    if "$ROOT/tools/fieldcmp" "$WORK/$solver-r1.dump" "$WORK/$solver-rn.dump" \
+        "$TOL" --l2; then
+        printf '%s: same field on 1 and %s ranks (L2 within the solve tolerance)\n' \
+            "$solver" "$RANKS"
     else
         printf '%s: FAILED, the field changed with the rank count\n' "$solver"
+        status=1
+    fi
+
+    # And no single point may be wildly off, which would mean something other
+    # than reduction order.
+    if ! "$ROOT/tools/fieldcmp" "$WORK/$solver-r1.dump" "$WORK/$solver-rn.dump" \
+        "$(awk -v t="$TOL" 'BEGIN { print t * 20 }')" >/dev/null; then
+        printf '%s: FAILED, a single point differs by more than twenty times the solve tolerance\n' \
+            "$solver"
         status=1
     fi
 done

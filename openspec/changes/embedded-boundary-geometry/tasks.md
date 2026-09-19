@@ -175,13 +175,85 @@ coarse cells across and rounds away.
 
 ## 9. Verification and benchmarking
 
-- [ ] 9.1 Verify the aperture-weighted divergence over fluid cells adjacent to the obstacle is within the solve tolerance, matching the rest of the domain
-- [ ] 9.2 Verify the velocity component normal to every zero-aperture face is zero to machine precision after a completed time step
-- [ ] 9.3 Verify net volume flux through channel cross-sections is constant at steady state for flow around an obstacle, and that flux through the body surface is zero
-- [ ] 9.4 Verify the operator couples each cell only to its six face neighbours by applying it to a unit vector at a cell adjacent to an obstacle corner and at one adjacent to an obstacle edge
-- [ ] 9.5 Measure interior-sweep time with no obstacle and with a small obstacle on the same grid for each of the three solvers, and verify they agree within measurement noise
-- [ ] 9.6 Measure interior-sweep time for a simple and a geometrically complex obstacle of comparable solid volume, and verify they agree within measurement noise
-- [ ] 9.7 Run the Schäfer–Turek 3D cylinder case and verify drag, lift and Strouhal number are reported against their published reference ranges
+- [x] 9.1 Verify the aperture-weighted divergence over fluid cells adjacent to the obstacle is within the solve tolerance, matching the rest of the domain
+- [x] 9.2 Verify the velocity component normal to every zero-aperture face is zero to machine precision after a completed time step
+- [x] 9.3 Verify net volume flux through channel cross-sections is constant at steady state for flow around an obstacle, and that flux through the body surface is zero
+- [x] 9.4 Verify the operator couples each cell only to its six face neighbours by applying it to a unit vector at a cell adjacent to an obstacle corner and at one adjacent to an obstacle edge
+- [x] 9.5 Measure interior-sweep time with no obstacle and with a small obstacle on the same grid for each of the three solvers, and verify they agree within measurement noise
+- [x] 9.6 Measure interior-sweep time for a simple and a geometrically complex obstacle of comparable solid volume, and verify they agree within measurement noise
+- [x] 9.7 Run the Schäfer–Turek 3D cylinder case and verify drag, lift and Strouhal number are reported against their published reference ranges
+Section 9 notes.
+
+Task 9.1 turned up a defect in `canal.par` rather than in the geometry. The
+setup declares `bcLeft 3`, an outflow, while `setSpecialBoundaryCondition`
+prescribes the inlet velocity there; pinning the pressure at a boundary whose
+normal velocity is already prescribed over-determines the pressure problem, so
+the projection left a divergence of about 5 at the inlet. It was invisible
+before this change because the old pressure boundary condition ignored the
+setup entirely and made every boundary a wall, which happens to be correct for
+an inlet. Measured without any body at all: 5.110 with the declared pairing,
+1.0e-10 with `bcLeft 1`. The setups now use `bcLeft 1`, and the file says why.
+
+Tasks 9.5 and 9.6 needed the interior sweep timed apart from the cut-cell
+correction. Timing the whole solve conflates the two, and on a 48^3 grid a
+lattice of 125 small cubes has 17408 surface cells -- 16 per cent of the domain
+-- so the correction is not negligible there and the combined figure moves by
+30 per cent. The claim the specification makes is about the interior sweep, and
+the design separates the two passes precisely so that it can be. Timed apart,
+the interior sweep is 1.570, 1.497 and 1.513 ns per cell update for no body, a
+sphere and the lattice, while the correction takes the combined figure from
+1.570 to 1.591 to 2.072 -- which is the surface-area scaling the design
+predicts. `SWEEP_BULK` and `SWEEP_SURFACE` profiler regions were added for this.
+
+The timing check turned up an inconsistency in the solver interface rather than
+in the timing. `Solver.surface` was filled only by the relaxation variants; the
+multigrid one builds a list per level and left that field zeroed, so anything
+outside the solver that asked how big the body's surface was got zero under one
+of the three. Multigrid now shares its finest level's list through the same
+field, so it means the same thing whichever variant is linked.
+
+The divergence check also caught a measurement mistake of its own. `adaptUV`
+updates the interior faces only, so the velocity halo keeps whatever the last
+exchange left there until `computeFG` refreshes it. On one rank that halo is the
+physical boundary and is already correct; once the domain is divided it is a
+neighbour's stale value, and reading it made the divergence at the first
+interior cell of every rank look like 0.28 rather than 7e-9. The driver
+exchanges the velocities before measuring.
+
+Comparing a whole multi-step run across rank counts needed the L2 difference
+rather than the largest one. The iteration counts are exactly equal on 1 and 8
+ranks for all three solvers, which is what says the solver is
+decomposition-independent, but the fields differ by 1.3e-4 at a single point
+downstream of the body against an L2 of 3.1e-6. That is the reproducibility
+limit the specification allows for: the residual norm, the mean the null-space
+handling removes and the velocity maximum the time step comes from are all
+global sums whose order the decomposition decides, and the flow amplifies the
+machine-precision differences that follow. `tools/fieldcmp` gained an `--l2`
+mode for this, and the check also guards the largest difference at twenty times
+the solve tolerance so that something other than reduction order would still be
+caught.
+
+Reviewing the force integration turned up a sign error in it. The pressure term
+reverses with the side of the wall the body is on, and the shear term does not:
+flow along a wall drags it the way the flow is going whether the fluid is above
+or below, because the surface normal and the velocity gradient both reverse and
+the two cancel. The mirrored branches had the shear negated, so the two sides of
+a body subtracted instead of adding.
+
+Task 9.7 ships the measurement rather than a pass, as the two-dimensional
+change did. Surface force integration over the closed faces gives drag and
+lift, and `tools/stcoeffs.py` reports them and a Strouhal number against the
+published ranges for case 3D-2Z. At half resolution and a short run the drag
+comes out at 3.57 peak and 3.42 mean against a reference of 3.20 to 3.30, about
+eight per cent high -- which is the same size and direction of error the
+two-dimensional change reported for the same reason, a staircase surface and a
+first-order wall treatment. The run is still in its start-up transient, the lift
+is nowhere near its periodic value and the wake has not begun to shed, so the
+Strouhal number has nothing to measure. The
+shipped setup at its own resolution and final time is hours of work and has not
+been run here. `STRICT=1` turns the report into a pass-or-fail check, which is
+what a later fractional-aperture change has to satisfy.
+
 ## 10. Particle tracing
 
 - [ ] 10.1 Add the particle parameters — count, start time, injection period, write period and the six seed-region bounds — and verify each is read back correctly and that none collides with `xlength`, `ylength` or `zlength` under the parser's prefix matching

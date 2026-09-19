@@ -8,6 +8,7 @@
 
 #include "allocate.h"
 #include "discretization.h"
+#include "forces.h"
 #ifdef TEST
 #include "fielddump.h"
 #endif
@@ -53,6 +54,19 @@ int main(int argc, char **argv)
   initProgress(d.te);
 #endif
 
+  /* A body in the domain means the force on it is worth recording: it is what
+   * the reference benchmarks are defined in terms of, and it costs a pass over
+   * the body's surface. */
+  FILE *forceFile = NULL;
+  int haveBody    = forcesHaveBody(&d);
+
+  if (haveBody && commIsMaster(&d.comm)) {
+    forceFile = fopen("forces.dat", "w");
+    if (forceFile != NULL) {
+      fprintf(forceFile, "# time fx fy fz\n");
+    }
+  }
+
   double tau = d.tau;
   double te  = d.te;
   double t   = 0.0;
@@ -77,6 +91,15 @@ int main(int argc, char **argv)
 
     if (commIsMaster(&d.comm)) {
       writeResidual(fp, t, res);
+    }
+
+    if (haveBody) {
+      double fx, fy, fz;
+      forcesCompute(&d, &fx, &fy, &fz);
+
+      if (forceFile != NULL) {
+        fprintf(forceFile, "%.10e %.10e %.10e %.10e\n", t, fx, fy, fz);
+      }
     }
 
     t += d.dt;
@@ -157,6 +180,10 @@ int main(int argc, char **argv)
 
   if (commIsMaster(s.comm)) {
     printf("Result output took %.2fs\n", timeStop - timeStart);
+  }
+
+  if (forceFile != NULL) {
+    fclose(forceFile);
   }
 
   finalizeProfiler();

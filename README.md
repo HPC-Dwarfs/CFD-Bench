@@ -259,6 +259,7 @@ The pieces can also be run on their own:
 | `tests/check-rejects.sh` | inputs that must be refused |
 | `tests/check-geometry-ranks.sh` | apertures are identical whatever the rank count |
 | `tests/check-solver-obstacle.sh` | the three solvers agree with a body present |
+| `tests/check-schaefer-turek.sh` | drag, lift and Strouhal against their published ranges |
 | `tests/record-baseline.sh [-v]` | record or verify the field baselines |
 
 Baselines and test geometry are generated, not committed; `record-baseline.sh`
@@ -272,5 +273,27 @@ make tests
 
 which also produces `NusifSolver-<TOOLCHAIN>-test`, a solver that writes a raw
 dump of `p`, `u`, `v` and `w` when `NUSIF_FIELD_DUMP` names a path. `tools/fieldcmp`
-compares two dumps and `tools/fieldprobe.py` reports statistics over a box of
-cells.
+compares two dumps -- `--l2` judges by the L2 difference rather than the largest
+one, which is the honest measure when two runs differ only in the order their
+global sums were formed -- and `tools/fieldprobe.py` reports statistics over a
+box of cells.
+
+### Forces on a body
+
+A run whose domain contains an obstacle writes `forces.dat`, a time series of
+the force the flow exerts on it, integrated over the closed faces that make up
+its surface. `tools/stcoeffs.py` turns that into the drag and lift coefficients
+and the Strouhal number of the Schaefer-Turek benchmark and reports each against
+its published range:
+
+```sh
+./NusifSolver-CLANG schaefer-turek.par
+tools/stcoeffs.py forces.dat
+```
+
+That check reports rather than asserts. Binary apertures give a body a staircase
+surface and a first-order wall treatment, so the drag is expected to come out
+high and a wake resolved by ten cells across the cylinder may not shed at all.
+`STRICT=1 tests/check-schaefer-turek.sh` turns the report into a pass-or-fail
+check, which is the measurement a later fractional-aperture change has to
+satisfy.

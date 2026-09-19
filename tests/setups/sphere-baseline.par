@@ -9,7 +9,7 @@
 
 name canal
 
-bcLeft    3
+bcLeft    1
 bcRight   3
 bcBottom  1
 bcTop     1

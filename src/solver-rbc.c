@@ -205,6 +205,10 @@ double solve(Solver *s, double *p, const double *rhs)
 
       pressureSaveSurface(&lv, p, color);
 
+#ifdef PROFILING
+      double bulkStart = getTimeStamp();
+#endif
+
       for (int k = 1; k < kmaxLocal + 1; k++) {
         for (int j = 1; j < jmaxLocal + 1; j++) {
           int iStart = colorRowStart(color, j, k, iOffset, jOffset, kOffset);
@@ -221,6 +225,11 @@ double solve(Solver *s, double *p, const double *rhs)
           }
         }
       }
+
+#ifdef PROFILING
+      T[SWEEP_BULK] += getTimeStamp() - bulkStart;
+      C[SWEEP_BULK]++;
+#endif
 
       pressureCorrectSurface(&lv, p, rhs, color, s->omega, &sweepRes);
       pressureBcApply(&s->bc, s->comm, p, imaxLocal, jmaxLocal, kmaxLocal);

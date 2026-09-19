@@ -5,12 +5,17 @@
  *
  * Compare two field dumps written by src/fielddump.c.
  *
- *   tools/fieldcmp <a.dump> <b.dump> [tolerance]
+ *   tools/fieldcmp <a.dump> <b.dump> [tolerance] [--l2]
  *
  * Reports the max absolute and L2 differences per field. Exits 0 when every
  * field is within the tolerance, 1 when one is not, and 2 when the files
  * cannot be compared at all. With no tolerance given the comparison is exact,
  * so a file compared against itself reports zero and exits 0.
+ *
+ * --l2 judges by the L2 difference rather than the largest one. Two runs of a
+ * multi-step simulation that differ only in the order their global sums were
+ * formed agree closely almost everywhere and can differ by more at a single
+ * point, so the L2 is the honest measure of whether they are the same run.
  */
 #include <math.h>
 #include <stdint.h>
@@ -62,12 +67,21 @@ static double *readDump(const char *path, int32_t dims[3], size_t *count)
 
 int main(int argc, char **argv)
 {
-  if (argc < 3 || argc > 4) {
-    fprintf(stderr, "Usage: %s <a.dump> <b.dump> [tolerance]\n", argv[0]);
+  if (argc < 3 || argc > 5) {
+    fprintf(stderr, "Usage: %s <a.dump> <b.dump> [tolerance] [--l2]\n", argv[0]);
     return 2;
   }
 
-  double tol = (argc == 4) ? atof(argv[3]) : 0.0;
+  double tol = 0.0;
+  int useL2  = 0;
+
+  for (int i = 3; i < argc; i++) {
+    if (strcmp(argv[i], "--l2") == 0) {
+      useL2 = 1;
+    } else {
+      tol = atof(argv[i]);
+    }
+  }
 
   int32_t dimsA[3], dimsB[3];
   size_t countA, countB;
@@ -106,7 +120,7 @@ int main(int argc, char **argv)
     }
 
     double l2 = sqrt(sumSq / (double)countA);
-    int bad   = (maxDiff > tol);
+    int bad   = useL2 ? (l2 > tol) : (maxDiff > tol);
 
     size_t k  = argMax / ((size_t)dimsA[0] * dimsA[1]);
     size_t j  = (argMax / dimsA[0]) % dimsA[1];

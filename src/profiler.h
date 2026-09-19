@@ -8,7 +8,12 @@
 #include "comm.h"
 
 #define MAX_STR_LENGTH 30
-typedef enum { SOLVER = 0, COMM, NUMREGIONS } RegionsType;
+/* BULK is the geometry-free interior sweep and SURFACE the cut-cell correction
+ * that follows it. They are timed apart because the benchmark's claim is about
+ * the interior sweep specifically: the correction is a separate pass whose work
+ * scales with the body's surface, so lumping the two together would measure
+ * something the claim does not make. */
+typedef enum { SOLVER = 0, COMM, SWEEP_BULK, SWEEP_SURFACE, NUMREGIONS } RegionsType;
 
 #ifdef PROFILING
 #define PROFILE(tag, call)                                                               \

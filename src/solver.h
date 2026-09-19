@@ -35,7 +35,9 @@ typedef struct {
   /* global index of this rank's first interior cell, minus one, so that the
    * red-black colouring can be taken from a cell's global position */
   int iOffset, jOffset, kOffset;
-  /* the cells the geometry-free sweep gets wrong, on the finest grid */
+  /* The cells the geometry-free sweep gets wrong, on the finest grid. Every
+   * variant fills this, including the multigrid one, which also keeps a list
+   * per coarse level. */
   SurfaceListType surface;
   /* global fluid cell count, which residual norms are divided by */
   double fluidCells;
@@ -110,6 +112,13 @@ extern void pressureCorrectSurface(const PressureLevelType *lv,
     int color,
     double omega,
     double *sweepRes);
+
+#ifdef PROFILING
+/* Seconds spent in the interior sweep and in the cut-cell correction since the
+ * last reset, for the timing check. */
+extern void pressureSweepTimes(double *bulk, double *surface);
+extern void pressureSweepTimesReset(void);
+#endif
 
 /* Fill a level description from the solver's finest grid. */
 extern void pressureLevelFromSolver(const Solver *s, PressureLevelType *lv);

@@ -264,6 +264,10 @@ static void smooth(
        * then a correction over this level's own surface list. */
       pressureSaveSurface(&desc, p, color);
 
+#ifdef PROFILING
+      double bulkStart = getTimeStamp();
+#endif
+
       for (int k = 1; k < kmaxLocal + 1; k++) {
         for (int j = 1; j < jmaxLocal + 1; j++) {
           int iStart =
@@ -279,6 +283,11 @@ static void smooth(
           }
         }
       }
+
+#ifdef PROFILING
+      T[SWEEP_BULK] += getTimeStamp() - bulkStart;
+      C[SWEEP_BULK]++;
+#endif
 
       pressureCorrectSurface(&desc, p, rhs, color, s->omega, &ignored);
       pressureBcApply(&s->bc, &lv->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
@@ -600,6 +609,12 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
       }
     }
   }
+
+  /* Solver.surface means the finest grid's surface list whatever the variant,
+   * so anything outside the solver can ask about the body without knowing which
+   * one is linked. Multigrid keeps a list per level; the finest of them is that
+   * list, shared rather than copied. */
+  s->surface  = levels[FINEST_LEVEL].surface;
 
   s->mgLevels = levels;
 

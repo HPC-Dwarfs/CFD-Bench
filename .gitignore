@@ -79,3 +79,4 @@ tests/geom/*.vox
 
 # Generated benchmark geometry: regenerate with tools/make-geometry.sh
 geometry/*.vox
+/forces.dat
