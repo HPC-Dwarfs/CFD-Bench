@@ -30,7 +30,7 @@ int main(int argc, char **argv)
 
   commInit(&d.comm, argc, argv);
   initParameter(&p);
-  FILE *fp;
+  FILE *fp = NULL;
   if (commIsMaster(&d.comm)) {
     fp = initResidualWriter();
   }
@@ -52,7 +52,7 @@ int main(int argc, char **argv)
   initProfiler(&d.comm);
 
 #ifndef VERBOSE
-  initProgress(d.te);
+  initProgress(&d.comm, d.te);
 #endif
 
   /* A body in the domain means the force on it is worth recording: it is what
@@ -142,7 +142,7 @@ int main(int argc, char **argv)
   vtkVector(&opts, "velocity", (VtkVector) { d.u, d.v, d.w });
   vtkClose(&opts);
 #else
-  if (commIsMaster(&d.comm))
+  if (fp != NULL)
     fclose(fp);
 
   double *pg;

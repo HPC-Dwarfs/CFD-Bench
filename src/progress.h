@@ -5,9 +5,14 @@
 
 #include <stdio.h>
 
+#include "comm.h"
+
 #ifndef __PROGRESS_H_
 #define __PROGRESS_H_
-extern void initProgress(double);
+/* The bar is drawn by the master rank alone: every rank steps the same global
+ * time, so one rank's view is the whole run's progress, and letting all of them
+ * redraw would just interleave carriage returns on the shared stdout. */
+extern void initProgress(CommType *, double);
 extern void printProgress(double);
 extern void stopProgress(void);
 extern FILE *initResidualWriter(void);
