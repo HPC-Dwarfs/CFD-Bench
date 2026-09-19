@@ -18,8 +18,8 @@
 /* Compressed-layout macros for color-split arrays.
  * Nc is the number of compressed columns (ceil of half the row width incl. ghosts).
  * ic = i/2 maps original column index to compressed index. */
-#define Nc              ((imaxLocal + 3) / 2)
-#define PRED(ic, j, k)  pRed[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
+#define Nc ((imaxLocal + 3) / 2)
+#define PRED(ic, j, k) pRed[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
 #define PBLACK(ic, j, k) pBlack[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
 #define RHSRED(ic, j, k) rhsRed[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
 #define RHSBLACK(ic, j, k) rhsBlack[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
@@ -153,11 +153,11 @@ double solve(Solver *s, double *p, const double *rhs)
 
 #else /* !_MPI: SIMD-friendly color-split layout with stride-1 inner loops */
 
-  int colorSize = Nc * (jmaxLocal + 2) * (kmaxLocal + 2);
-  double *pRed      = (double *)calloc(colorSize, sizeof(double));
-  double *pBlack    = (double *)calloc(colorSize, sizeof(double));
-  double *rhsRed    = (double *)calloc(colorSize, sizeof(double));
-  double *rhsBlack  = (double *)calloc(colorSize, sizeof(double));
+  int colorSize    = Nc * (jmaxLocal + 2) * (kmaxLocal + 2);
+  double *pRed     = (double *)calloc(colorSize, sizeof(double));
+  double *pBlack   = (double *)calloc(colorSize, sizeof(double));
+  double *rhsRed   = (double *)calloc(colorSize, sizeof(double));
+  double *rhsBlack = (double *)calloc(colorSize, sizeof(double));
 
   /* Gather: split p and rhs into separate red/black arrays */
   for (int k = 0; k <= kmaxLocal + 1; k++) {
@@ -181,19 +181,21 @@ double solve(Solver *s, double *p, const double *rhs)
     /* Pass 0: update red cells (neighbors live in pBlack) */
     for (int k = 1; k <= kmaxLocal; k++) {
       for (int j = 1; j <= jmaxLocal; j++) {
-        int pjk    = (j + k) % 2;
-        int ioff   = pjk - 1;
+        int pjk   = (j + k) % 2;
+        int ioff  = pjk - 1;
         int icBeg = 1 - pjk;
         int icEnd = (imaxLocal - pjk) / 2;
 
         for (int ic = icBeg; ic <= icEnd; ic++) {
-          double r = RHSRED(ic, j, k) -
+          double r =
+              RHSRED(ic, j, k) -
               ((PBLACK(ic + ioff + 1, j, k) - 2.0 * PRED(ic, j, k) +
-                   PBLACK(ic + ioff, j, k)) * idx2 +
-               (PBLACK(ic, j + 1, k) - 2.0 * PRED(ic, j, k) +
-                   PBLACK(ic, j - 1, k)) * idy2 +
-               (PBLACK(ic, j, k + 1) - 2.0 * PRED(ic, j, k) +
-                   PBLACK(ic, j, k - 1)) * idz2);
+                   PBLACK(ic + ioff, j, k)) *
+                      idx2 +
+                  (PBLACK(ic, j + 1, k) - 2.0 * PRED(ic, j, k) + PBLACK(ic, j - 1, k)) *
+                      idy2 +
+                  (PBLACK(ic, j, k + 1) - 2.0 * PRED(ic, j, k) + PBLACK(ic, j, k - 1)) *
+                      idz2);
 
           PRED(ic, j, k) -= factor * r;
           res += r * r;
@@ -204,19 +206,21 @@ double solve(Solver *s, double *p, const double *rhs)
     /* Pass 1: update black cells (neighbors live in pRed) */
     for (int k = 1; k <= kmaxLocal; k++) {
       for (int j = 1; j <= jmaxLocal; j++) {
-        int pjk    = (j + k) % 2;
-        int ioff   = -pjk;
+        int pjk   = (j + k) % 2;
+        int ioff  = -pjk;
         int icBeg = pjk;
         int icEnd = (imaxLocal - 1 + pjk) / 2;
 
         for (int ic = icBeg; ic <= icEnd; ic++) {
-          double r = RHSBLACK(ic, j, k) -
+          double r =
+              RHSBLACK(ic, j, k) -
               ((PRED(ic + ioff + 1, j, k) - 2.0 * PBLACK(ic, j, k) +
-                   PRED(ic + ioff, j, k)) * idx2 +
-               (PRED(ic, j + 1, k) - 2.0 * PBLACK(ic, j, k) +
-                   PRED(ic, j - 1, k)) * idy2 +
-               (PRED(ic, j, k + 1) - 2.0 * PBLACK(ic, j, k) +
-                   PRED(ic, j, k - 1)) * idz2);
+                   PRED(ic + ioff, j, k)) *
+                      idx2 +
+                  (PRED(ic, j + 1, k) - 2.0 * PBLACK(ic, j, k) + PRED(ic, j - 1, k)) *
+                      idy2 +
+                  (PRED(ic, j, k + 1) - 2.0 * PBLACK(ic, j, k) + PRED(ic, j, k - 1)) *
+                      idz2);
 
           PBLACK(ic, j, k) -= factor * r;
           res += r * r;
@@ -231,9 +235,9 @@ double solve(Solver *s, double *p, const double *rhs)
     /* k-direction BCs */
     for (int j = 1; j <= jmaxLocal; j++) {
       for (int ic = 0; ic < Nc; ic++) {
-        PRED(ic, j, 0)              = PBLACK(ic, j, 1);
-        PBLACK(ic, j, 0)            = PRED(ic, j, 1);
-        PRED(ic, j, kmaxLocal + 1)  = PBLACK(ic, j, kmaxLocal);
+        PRED(ic, j, 0)               = PBLACK(ic, j, 1);
+        PBLACK(ic, j, 0)             = PRED(ic, j, 1);
+        PRED(ic, j, kmaxLocal + 1)   = PBLACK(ic, j, kmaxLocal);
         PBLACK(ic, j, kmaxLocal + 1) = PRED(ic, j, kmaxLocal);
       }
     }
@@ -241,9 +245,9 @@ double solve(Solver *s, double *p, const double *rhs)
     /* j-direction BCs */
     for (int k = 1; k <= kmaxLocal; k++) {
       for (int ic = 0; ic < Nc; ic++) {
-        PRED(ic, 0, k)              = PBLACK(ic, 1, k);
-        PBLACK(ic, 0, k)            = PRED(ic, 1, k);
-        PRED(ic, jmaxLocal + 1, k)  = PBLACK(ic, jmaxLocal, k);
+        PRED(ic, 0, k)               = PBLACK(ic, 1, k);
+        PBLACK(ic, 0, k)             = PRED(ic, 1, k);
+        PRED(ic, jmaxLocal + 1, k)   = PBLACK(ic, jmaxLocal, k);
         PBLACK(ic, jmaxLocal + 1, k) = PRED(ic, jmaxLocal, k);
       }
     }

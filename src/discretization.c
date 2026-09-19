@@ -523,7 +523,7 @@ void computeFG(Discretization *s)
         F(i, j, k) = U(i, j, k) + dt * (inverseRe * (du2dx2 + du2dy2 + du2dz2) - du2dx -
                                            duvdy - duwdz + gx);
 
-        duvdx      = inverseDx * 0.25 *
+        duvdx = inverseDx * 0.25 *
                     ((U(i, j, k) + U(i, j + 1, k)) * (V(i, j, k) + V(i + 1, j, k)) -
                         (U(i - 1, j, k) + U(i - 1, j + 1, k)) *
                             (V(i, j, k) + V(i - 1, j, k))) +
@@ -558,7 +558,7 @@ void computeFG(Discretization *s)
         G(i, j, k) = V(i, j, k) + dt * (inverseRe * (dv2dx2 + dv2dy2 + dv2dz2) - duvdx -
                                            dv2dy - dvwdz + gy);
 
-        duwdx      = inverseDx * 0.25 *
+        duwdx = inverseDx * 0.25 *
                     ((U(i, j, k) + U(i, j, k + 1)) * (W(i, j, k) + W(i + 1, j, k)) -
                         (U(i - 1, j, k) + U(i - 1, j, k + 1)) *
                             (W(i, j, k) + W(i - 1, j, k))) +
