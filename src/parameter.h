@@ -17,6 +17,11 @@ typedef struct {
   int bcLeft, bcRight, bcBottom, bcTop, bcFront, bcBack;
   double u_init, v_init, w_init, p_init;
   int levels, presmooth, postsmooth;
+  /* Which preconditioner the conjugate gradient solver uses: "none" or
+   * "jacobi". Read by every build and acted on only by SOLVER=cg, the way
+   * levels and the smoothing counts are read by every build and acted on only
+   * by SOLVER=mg. An unsupported value is refused at initialization. */
+  char *precon;
   /* Obstacle geometry: a path to a voxel volume, or an analytic body such as
    * "sphere:xc,yc,zc,r". Absent means an obstacle-free domain. */
   char *geometryFile;

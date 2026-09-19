@@ -31,7 +31,7 @@ FULL=${FULL:-0}
 STRICT=${STRICT:-0}
 TE=${TE:-0.5}
 
-BIN="$ROOT/NusifSolver-$TOOLCHAIN"
+BIN="$ROOT/CFD-Solver-$TOOLCHAIN"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

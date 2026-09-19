@@ -68,7 +68,7 @@ for solver in $SOLVERS; do
         fi
 
         ( cd "$ROOT" && NUSIF_FIELD_DUMP="$got" \
-            "./NusifSolver-$TOOLCHAIN-test" "$par" >/dev/null ) || {
+            "./CFD-Solver-$TOOLCHAIN-test" "$par" >/dev/null ) || {
             echo "record-baseline.sh: run failed for $setup under $solver" >&2
             status=1
             continue

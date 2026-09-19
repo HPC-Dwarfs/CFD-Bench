@@ -25,6 +25,12 @@ typedef struct {
    * arrays are the only channel between geometry and everything else -- nothing
    * downstream reads a file, a shape or a cell type. */
   double *Ax, *Ay, *Az, *Lambda;
+  /* Global count of cells with a nonzero volume fraction. The null-space
+   * projection averages over these and no others: the operator's null vector is
+   * the constant over the fluid and zero over the solid, so a mean taken over
+   * every cell removes the wrong quantity and leaves the solid cells holding
+   * it. Solver keeps the same count under the same name for residual norms. */
+  double fluidCells;
   /* parameters */
   double eps, omega;
   double re, tau, gamma;

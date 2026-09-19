@@ -4,7 +4,7 @@
 #
 # Usage: tests/check-solver-obstacle.sh
 #
-#   - all three solvers converge to the same field;
+#   - all four solvers converge to the same field;
 #   - the cut-cell pass does not cost a disproportionate number of iterations
 #     against the same setup without the body;
 #   - the answer and the iteration count do not depend on the rank count.
@@ -40,9 +40,20 @@ iterations() {
     awk '/took .* (iterations|cycles) to reach/ { for (i = 1; i < NF; i++) if ($(i+1) == "iterations" || $(i+1) == "cycles") n = $i } END { print n }' "$1"
 }
 
+# Krylov solvers form their step lengths from global inner products, whose
+# floating-point reduction order depends on the decomposition, so a run near the
+# tolerance can legitimately take one more or one fewer iteration on a different
+# rank count. The converged field requirement is unchanged.
+is_krylov() {
+    case $1 in
+        cg) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 printf '========== solvers agree with a body ==========\n'
 
-for solver in rb rbc mg; do
+for solver in rb rbc mg cg; do
     if ! make -C "$ROOT" SOLVER="$solver" >/dev/null 2>&1 ||
        ! make -C "$ROOT" SOLVER="$solver" tests >/dev/null 2>&1; then
         echo "check-solver-obstacle.sh: build failed for $solver" >&2
@@ -50,10 +61,10 @@ for solver in rb rbc mg; do
     fi
 
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver.dump" \
-        "./NusifSolver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver.log" 2>&1 )
+        "./CFD-Solver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver.log" 2>&1 )
 
-    ( cd "$ROOT" && "./NusifSolver-$TOOLCHAIN" "$PAR" > "$WORK/$solver-plain.log" 2>&1 )
-    ( cd "$ROOT" && "./NusifSolver-$TOOLCHAIN" "$FREE" > "$WORK/$solver-free.log" 2>&1 )
+    ( cd "$ROOT" && "./CFD-Solver-$TOOLCHAIN" "$PAR" > "$WORK/$solver-plain.log" 2>&1 )
+    ( cd "$ROOT" && "./CFD-Solver-$TOOLCHAIN" "$FREE" > "$WORK/$solver-free.log" 2>&1 )
 
     withBody=$(iterations "$WORK/$solver-plain.log")
     without=$(iterations "$WORK/$solver-free.log")
@@ -77,7 +88,7 @@ done
 # The solve tolerance the setup asks for; fields are compared against it.
 TOL=$(sed -n 's/^eps  *\([0-9.eE+-]*\).*/\1/p' "$PAR" | head -1)
 
-for solver in rbc mg; do
+for solver in rbc mg cg; do
     printf -- '-- rb against %s\n' "$solver"
     if "$ROOT/tools/fieldcmp" "$WORK/rb.dump" "$WORK/$solver.dump" "$TOL"; then
         printf 'rb and %s agree to the solve tolerance\n' "$solver"
@@ -89,13 +100,13 @@ done
 
 printf '\n========== the answer does not depend on the rank count ==========\n'
 
-for solver in rb rbc mg; do
+for solver in rb rbc mg cg; do
     make -C "$ROOT" SOLVER="$solver" tests >/dev/null 2>&1
 
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver-r1.dump" \
-        "./NusifSolver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver-r1.log" 2>&1 )
+        "./CFD-Solver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver-r1.log" 2>&1 )
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver-rn.dump" \
-        "$MPIRUN" -n "$RANKS" "./NusifSolver-$TOOLCHAIN-test" "$PAR" \
+        "$MPIRUN" -n "$RANKS" "./CFD-Solver-$TOOLCHAIN-test" "$PAR" \
         > "$WORK/$solver-rn.log" 2>&1 )
 
     one=$(iterations "$WORK/$solver-r1.log")
@@ -103,7 +114,16 @@ for solver in rb rbc mg; do
 
     printf -- '-- %s: %s on 1 rank, %s on %s ranks\n' "$solver" "$one" "$many" "$RANKS"
 
-    if [ "$one" != "$many" ]; then
+    if is_krylov "$solver"; then
+        drift=$((one - many))
+        [ "$drift" -lt 0 ] && drift=$((-drift))
+
+        if [ "$drift" -gt 1 ]; then
+            printf '%s: FAILED, iteration count moved by %s with the rank count, more than the one a Krylov solver is allowed\n' \
+                "$solver" "$drift"
+            status=1
+        fi
+    elif [ "$one" != "$many" ]; then
         printf '%s: FAILED, iteration count changed with the rank count\n' "$solver"
         status=1
     fi
@@ -143,13 +163,13 @@ printf '\n========== the compressed layout agrees with the natural one =========
 # list entry carries, which is the thing being checked here.
 serialBuild() {
     make -C "$ROOT" ENABLE_MPI=false BUILD_DIR=./build/SERIAL SOLVER="$1" \
-        TARGET="NusifSolver-SERIAL-$1" "NusifSolver-SERIAL-$1-test" >/dev/null 2>&1
+        TARGET="CFD-Solver-SERIAL-$1" "CFD-Solver-SERIAL-$1-test" >/dev/null 2>&1
 }
 
 if serialBuild rb && serialBuild rbc; then
     for solver in rb rbc; do
         ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/serial-$solver.dump" \
-            "./NusifSolver-SERIAL-$solver-test" "$PAR" > "$WORK/serial-$solver.log" 2>&1 )
+            "./CFD-Solver-SERIAL-$solver-test" "$PAR" > "$WORK/serial-$solver.log" 2>&1 )
     done
 
     a=$(iterations "$WORK/serial-rb.log")
@@ -163,8 +183,8 @@ if serialBuild rb && serialBuild rbc; then
         status=1
     fi
 
-    rm -f "$ROOT/NusifSolver-SERIAL-rb" "$ROOT/NusifSolver-SERIAL-rbc" \
-        "$ROOT/NusifSolver-SERIAL-rb-test" "$ROOT/NusifSolver-SERIAL-rbc-test"
+    rm -f "$ROOT/CFD-Solver-SERIAL-rb" "$ROOT/CFD-Solver-SERIAL-rbc" \
+        "$ROOT/CFD-Solver-SERIAL-rb-test" "$ROOT/CFD-Solver-SERIAL-rbc-test"
 else
     echo "FAILED: could not build the serial variants"
     status=1

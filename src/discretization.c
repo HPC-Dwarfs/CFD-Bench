@@ -193,6 +193,26 @@ void initDiscretization(Discretization *s, Parameter *params)
     }
   }
 
+  /* Counted once, here, because the geometry does not move. */
+  {
+    double fluid = 0.0;
+
+    for (int k = 1; k < kmaxLocal + 1; k++) {
+      for (int j = 1; j < jmaxLocal + 1; j++) {
+        for (int i = 1; i < imaxLocal + 1; i++) {
+          size_t idx = (size_t)k * (imaxLocal + 2) * (jmaxLocal + 2) +
+                       (size_t)j * (imaxLocal + 2) + (size_t)i;
+          if (s->Lambda[idx] > 0.0) {
+            fluid += 1.0;
+          }
+        }
+      }
+    }
+
+    commReduceAll(&fluid, SUM);
+    s->fluidCells = (fluid > 0.0) ? fluid : 1.0;
+  }
+
 #ifdef VERBOSE
   printConfig(s);
 #endif /* VERBOSE */
@@ -521,29 +541,41 @@ static double maxElement(Discretization *s, double *m)
   return maxval;
 }
 
-/* Subtract the mean of a field over the interior, in place. */
+/* Subtract the mean of a field over the fluid cells, in place, leaving the
+ * solid cells alone. */
 static void removeMean(Discretization *s, double *field)
 {
   int imaxLocal = s->comm.imaxLocal;
   int jmaxLocal = s->comm.jmaxLocal;
   int kmaxLocal = s->comm.kmaxLocal;
 
-  double *p     = field;
-  double mean   = 0.0;
+  const double *Lambda = s->Lambda;
+  double *p            = field;
+  double mean          = 0.0;
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
+        if (LAM(i, j, k) == 0.0) {
+          continue;
+        }
         mean += P(i, j, k);
       }
     }
   }
   commReduceAll(&mean, SUM);
-  mean /= ((double)s->grid.imax * s->grid.jmax * s->grid.kmax);
+  mean /= s->fluidCells;
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
+        /* A solid cell is an identity row with a zero right-hand side, and the
+         * null vector is zero there. Shifting it would leave every solid cell
+         * holding -mean, which a relaxation sweep quietly repairs on its next
+         * cut-cell pass and a Krylov iteration does not. */
+        if (LAM(i, j, k) == 0.0) {
+          continue;
+        }
         P(i, j, k) = P(i, j, k) - mean;
       }
     }

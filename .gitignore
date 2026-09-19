@@ -35,7 +35,7 @@
 *.i*86
 *.x86_64
 *.hex
-NusifSolver-*
+CFD-Solver-*
 
 # Debug files
 *.dSYM/
@@ -81,4 +81,3 @@ tests/geom/*.vox
 geometry/*.vox
 /forces.dat
 /vis_files/
-/CFD-Solver-CLANG

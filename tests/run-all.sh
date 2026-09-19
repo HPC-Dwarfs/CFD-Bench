@@ -36,7 +36,7 @@ step() {
 
 # The check drivers link whichever solver variant is selected, and some of them
 # exercise one variant's internals, so run them under each in turn.
-for solver in rb rbc mg; do
+for solver in rb rbc mg cg; do
     export SOLVER=$solver
     step "check drivers, $solver, 1 rank"       "$ROOT/tests/run-checks.sh"
     step "check drivers, $solver, $RANKS ranks" "$ROOT/tests/run-checks.sh" -n "$RANKS"

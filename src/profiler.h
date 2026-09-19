@@ -13,7 +13,21 @@
  * the interior sweep specifically: the correction is a separate pass whose work
  * scales with the body's surface, so lumping the two together would measure
  * something the claim does not make. */
-typedef enum { SOLVER = 0, COMM, SWEEP_BULK, SWEEP_SURFACE, NUMREGIONS } RegionsType;
+/* CG_DOT, CG_AXPY and PRECON are the Krylov solver's own work: the global
+ * inner products, the vector updates, and the preconditioner application. The
+ * first is the interesting one -- two allreduces an iteration is a cost a
+ * Krylov method has and the relaxation solvers do not, so it is measured rather
+ * than inferred. They stay at zero in a build that links another solver. */
+typedef enum {
+  SOLVER = 0,
+  COMM,
+  SWEEP_BULK,
+  SWEEP_SURFACE,
+  CG_DOT,
+  CG_AXPY,
+  PRECON,
+  NUMREGIONS
+} RegionsType;
 
 #ifdef PROFILING
 #define PROFILE(tag, call)                                                               \

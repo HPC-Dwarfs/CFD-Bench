@@ -32,9 +32,43 @@ the Donor cell differencing scheme is used for convective terms.
 - Red-Black SOR
 - Compressed Red-Black SOR
 - Geometric Multigrid
+- Preconditioned Conjugate Gradient
 
-All three solve the same system, including when the domain contains an
-obstacle, and agree to the solve tolerance.
+All four solve the same system, including when the domain contains an
+obstacle, and agree to the solve tolerance. Select one at build time with
+`SOLVER=` (see [Configure](#1-configure)); the binary carries exactly one.
+
+The conjugate gradient variant applies the pressure operator matrix-free once
+per iteration, in the same two passes the relaxation sweeps use: a bulk pass
+that reads no geometry at all, then a correction confined to the cells the
+obstacle cuts. Its inner products, its preconditioner and its null-space
+projection are all restricted to the fluid unknowns, and solid cells hold
+exactly zero at every iteration rather than only at convergence.
+
+It is the one solver that costs global communication per iteration: two
+all-reductions, one for the direction's energy and one fusing the residual norm
+with the preconditioned inner product. The relaxation solvers have a single
+reduction, and only for their stopping test. That difference is real and is part
+of what a Krylov solver is; it is measured in its own profiler regions
+(`CG_DOT`, `CG_AXPY`, `PRECON`) rather than lumped into the sweep.
+
+The preconditioner is chosen with a `precon` line in the parameter file:
+
+| `precon` | meaning                                                          |
+|----------|------------------------------------------------------------------|
+| `jacobi` | the operator's diagonal, the default. Built from each cell's open faces, so it needs no stored field and reads no geometry array. |
+| `none`   | no preconditioning, for comparison.                              |
+
+An unrecognised value is refused at initialization rather than falling back to
+a default. `mg` is named in that message because a multigrid preconditioner is
+the intended next step and needs a symmetric V-cycle, which the current cycle is
+not; a parameter file asking for it is refused until that exists.
+
+Diagonal preconditioning does not fix the Poisson condition number, so on these
+grids the iteration count still grows with resolution and the conjugate
+gradient solver is not necessarily the fastest in wall-clock terms. What it
+provides is a Krylov framework with the operator, the reductions and the
+null-space handling in place and checked.
 
 ### Obstacles
 
@@ -55,7 +89,7 @@ TOOLCHAIN ?= GCC
 # Supported: true, false
 ENABLE_MPI ?= true
 ENABLE_OPENMP ?= false
-# Supported: rb, rbc, mg
+# Supported: rb, rbc, mg, cg
 SOLVER ?= rb
 # Supported: seq, mpi
 VTK_OUTPUT_FMT ?= seq

@@ -191,6 +191,23 @@ void commReduceAll(double *v, int op)
 #endif
 }
 
+void commReduceAllN(double *v, int count, int op)
+{
+#if defined(_MPI)
+  switch (op) {
+  case MAX:
+    MPI_Allreduce(MPI_IN_PLACE, v, count, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    break;
+  case MIN:
+    MPI_Allreduce(MPI_IN_PLACE, v, count, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    break;
+  case SUM:
+    MPI_Allreduce(MPI_IN_PLACE, v, count, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    break;
+  }
+#endif
+}
+
 extern void commReduce(double *v, double *o, int count, int op)
 {
 #if defined(_MPI)

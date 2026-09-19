@@ -14,7 +14,7 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TOOLCHAIN=${TOOLCHAIN:-CLANG}
-BIN="$ROOT/NusifSolver-$TOOLCHAIN"
+BIN="$ROOT/CFD-Solver-$TOOLCHAIN"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -162,6 +162,56 @@ if [ -f "$ROOT/tests/geom/skewed.vox" ]; then
     else
         echo "aspect ratio mismatch: OK"
     fi
+fi
+
+# The preconditioner selection, which only the conjugate gradient variant acts
+# on, so it needs its own binary. An unsupported value has to abort at
+# initialization rather than fall back to a default: a benchmark number
+# attributed to a preconditioner the run never used is worse than no number.
+CGBIN="$ROOT/CFD-Solver-SOLVERCG"
+
+if make -C "$ROOT" SOLVER=cg BUILD_DIR=./build/SOLVERCG \
+    TARGET="CFD-Solver-SOLVERCG" >/dev/null 2>&1; then
+
+    with_precon() {
+        base 1 1
+        printf 'precon %s\n' "$1"
+    }
+
+    saved_bin=$BIN
+    BIN=$CGBIN
+
+    with_precon "bogus" > "$WORK/precon-bogus.par"
+    expect_reject "an unknown preconditioner is refused" "$WORK/precon-bogus.par" \
+        "Unsupported preconditioner"
+
+    # Named separately because it is the one the follow-up change adds: a
+    # parameter file written for that change must not quietly run here with no
+    # preconditioning at all.
+    with_precon "mg" > "$WORK/precon-mg.par"
+    expect_reject "the multigrid preconditioner is refused until it exists" \
+        "$WORK/precon-mg.par" "not implemented yet"
+
+    BIN=$saved_bin
+
+    # And the two that are supported are accepted, so the check above is about
+    # the value and not about the parameter being rejected outright.
+    for good in none jacobi; do
+        with_precon "$good" > "$WORK/precon-$good.par"
+        printf -- '-- precon %s is accepted\n' "$good"
+
+        if ( cd "$WORK" && "$CGBIN" "$WORK/precon-$good.par" >/dev/null 2>&1 ); then
+            printf 'precon %s is accepted: OK\n' "$good"
+        else
+            printf 'precon %s is accepted: FAILED, the run was refused\n' "$good"
+            status=1
+        fi
+    done
+
+    rm -rf "$ROOT/build/SOLVERCG" "$CGBIN"
+else
+    echo "FAILED: could not build the conjugate gradient variant"
+    status=1
 fi
 
 printf '\n==========================================\n'

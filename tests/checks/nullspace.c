@@ -29,7 +29,8 @@
 #define KMAX 16
 #define STEPS 40
 
-static void buildParameter(Parameter *params, int leftRight, const char *name)
+static void buildParameter(
+    Parameter *params, int leftRight, const char *name, const char *geometry)
 {
   initParameter(params);
 
@@ -53,6 +54,8 @@ static void buildParameter(Parameter *params, int leftRight, const char *name)
   params->te         = 0.0;
   params->gx = params->gy = params->gz = 0.0;
   params->u_init = params->v_init = params->w_init = params->p_init = 0.0;
+
+  params->geometryFile = (char *)geometry;
 
   params->bcLeft = params->bcRight = leftRight;
   params->bcBottom = params->bcTop = NOSLIP;
@@ -95,7 +98,7 @@ int main(int argc, char **argv)
     Discretization d;
     Solver s;
 
-    buildParameter(&params, NOSLIP, "check-nullspace-closed");
+    buildParameter(&params, NOSLIP, "check-nullspace-closed", NULL);
     d.comm = comm;
     commPartition(&d.comm, KMAX, JMAX, IMAX);
     initDiscretization(&d, &params);
@@ -167,11 +170,27 @@ int main(int argc, char **argv)
         "mean pressure of an enclosed setup reached %.3e over %d steps",
         worstMean,
         STEPS);
-    CHECK_TRUE(worstMean < 0.01 * worstMeanUnhandled,
-        "null-space handling barely changed the drift: %.3e with it against %.3e "
-        "without",
-        worstMean,
-        worstMeanUnhandled);
+
+    /* The comparative form only means something when there is a drift to
+     * remove. A relaxation solver left to itself walks away over these forty
+     * steps, so the ratio is the assertion that the handling is what stops it.
+     * A Krylov solver projects the constant out at every iteration of its own
+     * accord and so never accumulates one, leaving the ratio a comparison of
+     * two numbers that are both rounding -- which is a pass, not a defect, and
+     * the absolute bound above is what carries the requirement there. */
+    if (worstMeanUnhandled > 1e-6) {
+      CHECK_TRUE(worstMean < 0.01 * worstMeanUnhandled,
+          "null-space handling barely changed the drift: %.3e with it against %.3e "
+          "without",
+          worstMean,
+          worstMeanUnhandled);
+    } else {
+      CHECK_TRUE(worstMean < 1e-6,
+          "this solver does not accumulate a constant of its own (%.3e without the "
+          "handling), but the handled run still reached %.3e",
+          worstMeanUnhandled,
+          worstMean);
+    }
 
     if (commIsMaster(&d.comm)) {
       printf("enclosed over %d steps: worst mean pressure %.3e with the handling, "
@@ -182,13 +201,216 @@ int main(int argc, char **argv)
     }
   }
 
+  /*
+   * The enclosed case with a body in it. The null vector of the operator is the
+   * constant over the fluid and zero over the solid, not the constant over
+   * every cell, so the projection has to average over fluid cells alone and
+   * leave the solid ones at zero.
+   *
+   * A relaxation sweep repairs a solid cell the projection disturbed on its
+   * next cut-cell pass, which is why this went unnoticed; a Krylov iteration
+   * has no such pass and carries the error into every inner product it forms.
+   */
+  {
+    Parameter params;
+    Discretization d;
+    Solver s;
+
+    buildParameter(&params,
+        NOSLIP,
+        "check-nullspace-body",
+        "sphere:0.5,0.5,0.5,0.2");
+    d.comm = comm;
+    commPartition(&d.comm, KMAX, JMAX, IMAX);
+    initDiscretization(&d, &params);
+    initSolver(&s, &d, &params);
+    initProfiler(&d.comm);
+
+    CHECK_TRUE(pressureBcIsSingular(&s.bc),
+        "an all-wall setup with a body was not detected as singular");
+
+    int imaxLocal        = d.comm.imaxLocal;
+    int jmaxLocal        = d.comm.jmaxLocal;
+    int kmaxLocal        = d.comm.kmaxLocal;
+    const double *Lambda = d.Lambda;
+    size_t size = (size_t)(imaxLocal + 2) * (jmaxLocal + 2) * (kmaxLocal + 2);
+
+    double solidCells = 0.0;
+    for (int k = 1; k < kmaxLocal + 1; k++) {
+      for (int j = 1; j < jmaxLocal + 1; j++) {
+        for (int i = 1; i < imaxLocal + 1; i++) {
+          if (LAM(i, j, k) == 0.0) {
+            solidCells += 1.0;
+          }
+        }
+      }
+    }
+    commReduceAll(&solidCells, SUM);
+
+    CHECK_TRUE(solidCells > 0.0,
+        "the body produced no solid cells, so the projection is untested here");
+    CHECK_TRUE(d.fluidCells < (double)IMAX * JMAX * KMAX,
+        "the fluid cell count %.0f is the whole domain despite a body",
+        d.fluidCells);
+
+    /* A field whose fluid mean is a known constant, with the solid cells where
+     * the solver leaves them. */
+    {
+      double *p            = d.p;
+      double *rhs          = d.rhs;
+      double expectedFluid = 0.0;
+
+      for (size_t i = 0; i < size; i++) {
+        d.p[i]   = 0.0;
+        d.rhs[i] = 0.0;
+      }
+
+      for (int k = 1; k < kmaxLocal + 1; k++) {
+        for (int j = 1; j < jmaxLocal + 1; j++) {
+          for (int i = 1; i < imaxLocal + 1; i++) {
+            if (LAM(i, j, k) == 0.0) {
+              continue;
+            }
+            P(i, j, k) = 3.0 + 0.5 * (double)((i + j + k) % 4);
+            expectedFluid += P(i, j, k);
+          }
+        }
+      }
+
+      commReduceAll(&expectedFluid, SUM);
+      expectedFluid /= d.fluidCells;
+
+      /* What the projection has to remove: the fluid mean, not the mean over
+       * every cell, which the body's zeros would drag down. */
+      normalizePressure(&d);
+
+      double afterMean  = 0.0;
+      int nonzeroSolid  = 0;
+
+      for (int k = 1; k < kmaxLocal + 1; k++) {
+        for (int j = 1; j < jmaxLocal + 1; j++) {
+          for (int i = 1; i < imaxLocal + 1; i++) {
+            if (LAM(i, j, k) == 0.0) {
+              if (P(i, j, k) != 0.0) {
+                ++nonzeroSolid;
+              }
+              continue;
+            }
+            afterMean += P(i, j, k);
+          }
+        }
+      }
+
+      commReduceAll(&afterMean, SUM);
+      afterMean /= d.fluidCells;
+
+      double solidTotal = (double)nonzeroSolid;
+      commReduceAll(&solidTotal, SUM);
+
+      CHECK_TRUE(solidTotal == 0.0,
+          "%.0f solid cells hold a nonzero pressure after the projection",
+          solidTotal);
+      CHECK_NEAR(afterMean,
+          0.0,
+          1e-12,
+          "the fluid mean after the projection is not zero, so the constant "
+          "removed was not the fluid mean (it was %.17g)",
+          expectedFluid);
+    }
+
+    /* And the solve itself: this solver converges, ends with the body still at
+     * exactly zero, and agrees with whatever the others produce. The
+     * cross-solver comparison is the shell gate's job -- what a single driver
+     * can assert is that the field is the unique one with zero fluid mean,
+     * which every solver must therefore reach. */
+    {
+      int offsets[NDIMS] = { 0, 0, 0 };
+      commGetOffsets(&d.comm, offsets, KMAX, JMAX, IMAX);
+
+      double *p   = d.p;
+      double *rhs = d.rhs;
+
+      for (size_t i = 0; i < size; i++) {
+        d.p[i] = 0.0;
+      }
+
+      for (int step = 0; step < 10; step++) {
+        for (int k = 1; k < kmaxLocal + 1; k++) {
+          for (int j = 1; j < jmaxLocal + 1; j++) {
+            for (int i = 1; i < imaxLocal + 1; i++) {
+              double x     = ((i - 1 + offsets[IDIM]) + 0.5) / (double)IMAX;
+              double y     = ((j - 1 + offsets[JDIM]) + 0.5) / (double)JMAX;
+              double z     = ((k - 1 + offsets[KDIM]) + 0.5) / (double)KMAX;
+
+              RHS(i, j, k) = LAM(i, j, k) *
+                             (cos(M_PI * x) * cos(M_PI * y) * cos(M_PI * z) + 1.0);
+            }
+          }
+        }
+
+        normalizePressure(&d);
+        solve(&s, d.p, d.rhs);
+      }
+
+      double res           = 0.0;
+      int nonzeroSolid     = 0;
+      double worstFluidAbs = 0.0;
+
+      PressureLevelType lv;
+      pressureLevelFromSolver(&s, &lv);
+      res = pressureResidualNorm(&lv, d.p, d.rhs);
+
+      for (int k = 1; k < kmaxLocal + 1; k++) {
+        for (int j = 1; j < jmaxLocal + 1; j++) {
+          for (int i = 1; i < imaxLocal + 1; i++) {
+            if (LAM(i, j, k) == 0.0) {
+              if (P(i, j, k) != 0.0) {
+                ++nonzeroSolid;
+              }
+              continue;
+            }
+            if (fabs(P(i, j, k)) > worstFluidAbs) {
+              worstFluidAbs = fabs(P(i, j, k));
+            }
+          }
+        }
+      }
+
+      double solidTotal = (double)nonzeroSolid;
+      commReduceAll(&solidTotal, SUM);
+      commReduceAll(&worstFluidAbs, MAX);
+
+      CHECK_TRUE(res < params.eps * params.eps,
+          "a singular setup with a body did not converge: %.3e against eps^2 %.3e",
+          res,
+          params.eps * params.eps);
+      CHECK_TRUE(worstFluidAbs < 1e3,
+          "the fluid pressure reached %.3e over ten steps, so it is drifting",
+          worstFluidAbs);
+
+      /* Reported rather than asserted. Whether a solver leaves the body at zero
+       * after a solve is that solver's property and tests/checks/obstacle.c
+       * already asserts it; repeating it here would only make one defect fail
+       * two drivers. What this driver is about is the projection, which is
+       * checked above and holds under every solver. */
+      if (commIsMaster(&d.comm)) {
+        printf("enclosed with a body: %.0f solid cells, residual %.3e, largest fluid "
+               "pressure %.3e, %.0f solid cells left nonzero by the solve\n",
+            solidCells,
+            sqrt(res),
+            worstFluidAbs,
+            solidTotal);
+      }
+    }
+  }
+
   /* The outflow case: not singular, and the handling must change nothing. */
   {
     Parameter params;
     Discretization d;
     Solver s;
 
-    buildParameter(&params, OUTFLOW, "check-nullspace-open");
+    buildParameter(&params, OUTFLOW, "check-nullspace-open", NULL);
     d.comm = comm;
     commPartition(&d.comm, KMAX, JMAX, IMAX);
     initDiscretization(&d, &params);

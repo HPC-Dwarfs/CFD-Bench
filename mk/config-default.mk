@@ -3,7 +3,7 @@ TOOLCHAIN ?= CLANG
 # Supported: true, false
 ENABLE_MPI ?= true
 ENABLE_OPENMP ?= false
-# Supported: rb, rbc, mg
+# Supported: rb, rbc, mg, cg
 SOLVER ?= mg
 # Supported: seq, mpi
 VTK_OUTPUT_FMT ?= seq

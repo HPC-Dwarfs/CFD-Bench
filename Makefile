@@ -26,6 +26,19 @@ include config.mk
 include $(MAKE_DIR)/include_$(TOOLCHAIN).mk
 INCLUDES  += -I$(SRC_DIR) -I$(BUILD_DIR)
 
+# Which solver variant this build directory holds.
+#
+# The Makefile links exactly one solver-$(SOLVER).o and compiles everything with
+# -DSOLVER_$(SOLVER), but none of that is visible to make as a timestamp. So
+# switching back to a variant whose object file is already up to date used to
+# leave the previously linked binaries in place -- tests/run-all.sh loops over
+# every solver and so hits this on its second run, silently reporting one
+# variant's results under another's name. Rewriting this file whenever the
+# selection changes makes the choice an ordinary prerequisite.
+$(shell mkdir -p $(BUILD_DIR))
+$(shell [ "$$(cat $(BUILD_DIR)/solver.sel 2>/dev/null)" = "$(SOLVER)" ] || printf '%s' "$(SOLVER)" > $(BUILD_DIR)/solver.sel)
+SOLVER_SEL = $(BUILD_DIR)/solver.sel
+
 VPATH     = $(SRC_DIR)
 OBJ       = $(filter-out $(BUILD_DIR)/vtkWriter-%.o $(BUILD_DIR)/solver-%.o, $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(wildcard $(SRC_DIR)/*.c)))
 OBJ      += $(BUILD_DIR)/vtkWriter-$(VTK_OUTPUT_FMT).o
@@ -62,7 +75,7 @@ CompileFlags:
   Compiler: clang
 endef
 
-${TARGET}: sanity-checks $(BUILD_DIR) .clangd $(OBJ)
+${TARGET}: sanity-checks $(BUILD_DIR) .clangd $(SOLVER_SEL) $(OBJ)
 	$(info ===>  LINKING  $(TARGET))
 	$(Q)${LD} ${LFLAGS} -o $(TARGET) $(OBJ) $(LIBS)
 
@@ -80,11 +93,11 @@ $(TEST_BUILD_DIR)/%.o:  %.c $(MAKE_DIR)/include_$(TOOLCHAIN).mk config.mk
 	$(Q)$(CC) -c $(CPPFLAGS) -DTEST $(CFLAGS) $< -o $@
 	$(Q)$(CC) $(CPPFLAGS) -DTEST -MT $@ -MM $< > $(TEST_BUILD_DIR)/$*.d
 
-$(TEST_TARGET): sanity-checks $(TEST_BUILD_DIR) $(TEST_OBJ)
+$(TEST_TARGET): sanity-checks $(TEST_BUILD_DIR) $(SOLVER_SEL) $(TEST_OBJ)
 	$(info ===>  LINKING  $(TEST_TARGET))
 	$(Q)${LD} ${LFLAGS} -o $(TEST_TARGET) $(TEST_OBJ) $(LIBS)
 
-$(BUILD_DIR)/check-%: $(CHECK_DIR)/%.c $(TEST_OBJ_NOMAIN)
+$(BUILD_DIR)/check-%: $(CHECK_DIR)/%.c $(SOLVER_SEL) $(TEST_OBJ_NOMAIN)
 	$(info ===>  LINKING  $@)
 	$(Q)$(CC) $(CPPFLAGS) -I$(CHECK_DIR) -DTEST $(CFLAGS) -o $@ $< $(TEST_OBJ_NOMAIN) ${LFLAGS} $(LIBS)
 

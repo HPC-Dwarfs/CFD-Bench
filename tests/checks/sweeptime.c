@@ -53,6 +53,12 @@ typedef struct {
   const char *label;
   double nsPerUpdate;    /* interior sweep only */
   double nsPerUpdateAll; /* interior sweep plus the cut-cell correction */
+  /* The same two numbers for pressureApplyOperator. A relaxation solver touches
+   * the operator once per sweep; a Krylov solver applies it once per iteration,
+   * so the claim has to hold for the application in its own right and not only
+   * as a property of the sweep it was modelled on. */
+  double nsPerApply;
+  double nsPerApplyAll;
   double surfaceCells;
   double solidCells;
 } ResultType;
@@ -124,6 +130,46 @@ static ResultType measure(CommType *base, const char *label, const char *geometr
   commReduceAll(&best, MAX);
   commReduceAll(&bestSurface, MAX);
 
+  /* The operator application, timed the same way: the same number of passes
+   * over the same grid, fastest repeat taken. */
+  double bestApply        = 0.0;
+  double bestApplySurface = 0.0;
+
+  {
+    PressureLevelType lv;
+    pressureLevelFromSolver(&S, &lv);
+
+    double *x = calloc(size, sizeof(double));
+    double *y = calloc(size, sizeof(double));
+
+    for (int r = 0; r < REPEATS; r++) {
+      for (size_t i = 0; i < size; i++) {
+        x[i] = 1e-3 * (double)(i % 31);
+        y[i] = 0.0;
+      }
+
+      pressureSweepTimesReset();
+
+      for (int it = 0; it < ITERATIONS; it++) {
+        pressureApplyOperator(&lv, x, y);
+      }
+
+      double bulk, surface;
+      pressureSweepTimes(&bulk, &surface);
+
+      if (r == 0 || bulk < bestApply) {
+        bestApply        = bulk;
+        bestApplySurface = surface;
+      }
+    }
+
+    free(x);
+    free(y);
+  }
+
+  commReduceAll(&bestApply, MAX);
+  commReduceAll(&bestApplySurface, MAX);
+
   double surface = (double)S.surface.count;
   double solid   = 0.0;
 
@@ -149,6 +195,8 @@ static ResultType measure(CommType *base, const char *label, const char *geometr
   out.label          = label;
   out.nsPerUpdate    = best * 1e9 / updates;
   out.nsPerUpdateAll = (best + bestSurface) * 1e9 / updates;
+  out.nsPerApply     = bestApply * 1e9 / updates;
+  out.nsPerApplyAll  = (bestApply + bestApplySurface) * 1e9 / updates;
   out.surfaceCells = surface;
   out.solidCells   = solid;
 
@@ -157,30 +205,51 @@ static ResultType measure(CommType *base, const char *label, const char *geometr
 
 static void report(const ResultType *r)
 {
-  printf("%-8s interior %7.3f ns/update, with correction %7.3f, %6.0f solid, %6.0f "
-         "surface cells\n",
+  printf("%-8s sweep %7.3f ns/update (with correction %7.3f), apply %7.3f (%7.3f), "
+         "%6.0f solid, %6.0f surface cells\n",
       r->label,
       r->nsPerUpdate,
       r->nsPerUpdateAll,
+      r->nsPerApply,
+      r->nsPerApplyAll,
       r->solidCells,
       r->surfaceCells);
 }
 
-static void compare(const ResultType *a, const ResultType *b, const char *what)
+/* The bulk time of one pass, picked out of a result so the two comparisons
+ * below differ only in which pass they are about. */
+typedef double (*SelectorType)(const ResultType *);
+
+static double sweepBulk(const ResultType *r) { return r->nsPerUpdate; }
+static double applyBulk(const ResultType *r) { return r->nsPerApply; }
+
+static void compareWith(const ResultType *a,
+    const ResultType *b,
+    SelectorType pick,
+    const char *pass,
+    const char *what)
 {
-  double rel = fabs(a->nsPerUpdate - b->nsPerUpdate) /
-               (0.5 * (a->nsPerUpdate + b->nsPerUpdate));
+  double ta  = pick(a);
+  double tb  = pick(b);
+  double rel = fabs(ta - tb) / (0.5 * (ta + tb));
 
   CHECK_TRUE(rel < TOLERANCE,
-      "%s: %s took %.3f ns per update and %s took %.3f, a difference of %.1f%% "
+      "%s (%s): %s took %.3f ns per update and %s took %.3f, a difference of %.1f%% "
       "against a %.0f%% tolerance",
       what,
+      pass,
       a->label,
-      a->nsPerUpdate,
+      ta,
       b->label,
-      b->nsPerUpdate,
+      tb,
       100.0 * rel,
       100.0 * TOLERANCE);
+}
+
+static void compare(const ResultType *a, const ResultType *b, const char *what)
+{
+  compareWith(a, b, sweepBulk, "sweep", what);
+  compareWith(a, b, applyBulk, "apply", what);
 }
 
 int main(int argc, char **argv)

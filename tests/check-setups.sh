@@ -23,7 +23,7 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TOOLCHAIN=${TOOLCHAIN:-CLANG}
-BIN="$ROOT/NusifSolver-$TOOLCHAIN"
+BIN="$ROOT/CFD-Solver-$TOOLCHAIN"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

@@ -196,6 +196,116 @@ void pressureCorrectSurface(const PressureLevelType *lv,
 #endif
 }
 
+/*
+ * Apply the operator to the listed cells with the coefficients their geometry
+ * actually implies, replacing whatever the bulk pass left there.
+ *
+ * Deliberately a sibling of pressureCorrectSurface rather than a reuse of it:
+ * that one relaxes -- reads saved, writes a new p, and swaps a residual
+ * contribution -- while this one applies, reading x and overwriting y. What
+ * they share is the coefficients, which is what tests/checks/operator.c pins
+ * by checking the application against pressureResidualNorm at cut cells.
+ *
+ * One pass over every entry, no colour split: an apply reads only x, so no
+ * entry can see another's output and the traversal order cannot matter.
+ */
+void pressureApplySurface(const PressureLevelType *lv, const double *x, double *y)
+{
+  SurfaceListType *list = lv->list;
+
+  if (list == NULL || list->count == 0) {
+    return;
+  }
+
+  int imaxLocal = lv->imaxLocal;
+  int jmaxLocal = lv->jmaxLocal;
+
+  int strideJ   = imaxLocal + 2;
+  int strideK   = (imaxLocal + 2) * (jmaxLocal + 2);
+
+#ifdef PROFILING
+  double surfaceStart = getTimeStamp();
+#endif
+
+  for (int e = 0; e < list->count; e++) {
+    int idx = list->index[e];
+
+    if (list->solid[e]) {
+      /* An identity row applied to a vector whose solid entries are zero. */
+      y[idx] = 0.0;
+      continue;
+    }
+
+    double xc = x[idx];
+
+    y[idx]    = -(list->aE[e] * (x[idx + 1] - xc) + list->aW[e] * (x[idx - 1] - xc) +
+                list->aN[e] * (x[idx + strideJ] - xc) +
+                list->aS[e] * (x[idx - strideJ] - xc) +
+                list->aT[e] * (x[idx + strideK] - xc) +
+                list->aB[e] * (x[idx - strideK] - xc));
+  }
+
+#ifdef PROFILING
+  T[SWEEP_SURFACE] += getTimeStamp() - surfaceStart;
+  C[SWEEP_SURFACE]++;
+#endif
+}
+
+/* The operand and the result of an application, indexed like every other field.
+ * util.h names a macro per field it knows about; these two are local because
+ * only the application uses them. */
+#define X(i, j, k)                                                                       \
+  x[((k) * (imaxLocal + 2) * (jmaxLocal + 2)) + ((j) * (imaxLocal + 2)) + (i)]
+#define Y(i, j, k)                                                                       \
+  y[((k) * (imaxLocal + 2) * (jmaxLocal + 2)) + ((j) * (imaxLocal + 2)) + (i)]
+
+/*
+ * y = -A x, matrix-free, in the same two passes the relaxation sweep uses.
+ *
+ * The bulk pass reads no geometry at all, so an application costs the same with
+ * a body and without one -- the property the whole embedded-boundary
+ * representation exists to preserve, and the reason a Krylov solver, which
+ * applies the operator every iteration rather than once per solve, does not
+ * forfeit it. What the bulk pass gets wrong is confined to the surface list,
+ * which is O(body surface).
+ */
+void pressureApplyOperator(const PressureLevelType *lv, double *x, double *y)
+{
+  int imaxLocal = lv->imaxLocal;
+  int jmaxLocal = lv->jmaxLocal;
+  int kmaxLocal = lv->kmaxLocal;
+
+  double idx2   = 1.0 / (lv->dx * lv->dx);
+  double idy2   = 1.0 / (lv->dy * lv->dy);
+  double idz2   = 1.0 / (lv->dz * lv->dz);
+
+  PROFILE(COMM, commExchange(lv->comm, x));
+  pressureBcApply(lv->bc, lv->comm, x, imaxLocal, jmaxLocal, kmaxLocal);
+
+#ifdef PROFILING
+  double bulkStart = getTimeStamp();
+#endif
+
+  for (int k = 1; k < kmaxLocal + 1; k++) {
+    for (int j = 1; j < jmaxLocal + 1; j++) {
+      for (int i = 1; i < imaxLocal + 1; i++) {
+        double xc = X(i, j, k);
+
+        Y(i, j, k) = -((X(i + 1, j, k) - 2.0 * xc + X(i - 1, j, k)) * idx2 +
+                       (X(i, j + 1, k) - 2.0 * xc + X(i, j - 1, k)) * idy2 +
+                       (X(i, j, k + 1) - 2.0 * xc + X(i, j, k - 1)) * idz2);
+      }
+    }
+  }
+
+#ifdef PROFILING
+  T[SWEEP_BULK] += getTimeStamp() - bulkStart;
+  C[SWEEP_BULK]++;
+#endif
+
+  pressureApplySurface(lv, x, y);
+}
+
 void solverBaseInit(Solver *s, Discretization *d, Parameter *p)
 {
   s->eps      = p->eps;
