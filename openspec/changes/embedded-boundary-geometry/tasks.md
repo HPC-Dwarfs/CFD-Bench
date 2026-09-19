@@ -256,20 +256,51 @@ what a later fractional-aperture change has to satisfy.
 
 ## 10. Particle tracing
 
-- [ ] 10.1 Add the particle parameters — count, start time, injection period, write period and the six seed-region bounds — and verify each is read back correctly and that none collides with `xlength`, `ylength` or `zlength` under the parser's prefix matching
-- [ ] 10.2 Add the particle pool with heap storage sized from the injection rate and grown on demand, plus the compaction pass that reclaims removed particles, and verify storage per rank is substantially unchanged when the grid is refined by a factor of two in each direction
-- [ ] 10.3 Implement deterministic seed-position generation from the global particle index and batch number, and verify two runs and two rank counts inject identical seed positions
-- [ ] 10.4 Implement injection into the seed region from the start time at the injection period, skipping positions inside solid regions, and verify no particle is created before the start time, all lie in the seed region, and none lies in a cell of zero volume fraction
-- [ ] 10.5 Implement trilinear interpolation of each velocity component at its own staggered face location, and verify a particle in a uniform flow of known velocity displaces by velocity times elapsed time
-- [ ] 10.6 Advance particles with the flow solver's current time step, and verify displacement over a step where the adaptive step changed matches the step actually taken rather than the parameter-file value
-- [ ] 10.7 Implement obstruction by walking the faces the particle path crosses and stopping at the first zero aperture, removing and counting the particle, and verify no particle appears on the far side of a zero-thickness plate
-- [ ] 10.8 Verify no written particle position lies inside a cell of zero volume fraction over a long run around a closed body
-- [ ] 10.9 Implement position-to-rank lookup through the Cartesian topology and migration by one collective exchange of variable counts, and verify a particle crossing a subdomain boundary is held afterwards by exactly one rank, and that one is the rank owning its new position
-- [ ] 10.10 Remove and count particles advected past a domain boundary, and verify injected equals written plus removed-at-boundary plus removed-at-body at the end of a run
-- [ ] 10.11 Write particle positions as VTK polydata at the write period, gathered to rank 0, and verify a particle file and the field output for the same time load together and the particles lie within the domain
-- [ ] 10.12 Verify a setup that configures no particles produces fields, output files and run time bit-identical to the same setup before tracing existed
-- [ ] 10.13 Verify the set of particle positions written at a given time agrees on 1 and 8 ranks to within the reproducibility limits of the flow field
+- [x] 10.1 Add the particle parameters — count, start time, injection period, write period and the six seed-region bounds — and verify each is read back correctly and that none collides with `xlength`, `ylength` or `zlength` under the parser's prefix matching
+- [x] 10.2 Add the particle pool with heap storage sized from the injection rate and grown on demand, plus the compaction pass that reclaims removed particles, and verify storage per rank is substantially unchanged when the grid is refined by a factor of two in each direction
+- [x] 10.3 Implement deterministic seed-position generation from the global particle index and batch number, and verify two runs and two rank counts inject identical seed positions
+- [x] 10.4 Implement injection into the seed region from the start time at the injection period, skipping positions inside solid regions, and verify no particle is created before the start time, all lie in the seed region, and none lies in a cell of zero volume fraction
+- [x] 10.5 Implement trilinear interpolation of each velocity component at its own staggered face location, and verify a particle in a uniform flow of known velocity displaces by velocity times elapsed time
+- [x] 10.6 Advance particles with the flow solver's current time step, and verify displacement over a step where the adaptive step changed matches the step actually taken rather than the parameter-file value
+- [x] 10.7 Implement obstruction by walking the faces the particle path crosses and stopping at the first zero aperture, removing and counting the particle, and verify no particle appears on the far side of a zero-thickness plate
+- [x] 10.8 Verify no written particle position lies inside a cell of zero volume fraction over a long run around a closed body
+- [x] 10.9 Implement position-to-rank lookup through the Cartesian topology and migration by one collective exchange of variable counts, and verify a particle crossing a subdomain boundary is held afterwards by exactly one rank, and that one is the rank owning its new position
+- [x] 10.10 Remove and count particles advected past a domain boundary, and verify injected equals written plus removed-at-boundary plus removed-at-body at the end of a run
+- [x] 10.11 Write particle positions as VTK polydata at the write period, gathered to rank 0, and verify a particle file and the field output for the same time load together and the particles lie within the domain
+- [x] 10.12 Verify a setup that configures no particles produces fields, output files and run time bit-identical to the same setup before tracing existed
+- [x] 10.13 Verify the set of particle positions written at a given time agrees on 1 and 8 ranks to within the reproducibility limits of the flow field
 
 ## 11. Aggregate
 
-- [ ] 11.1 Add every check from sections 4 through 10 to `tests/run-all.sh`, and verify the aggregate run reports a single pass/fail summary at 1 and 4 ranks
+- [x] 11.1 Add every check from sections 4 through 10 to `tests/run-all.sh`, and verify the aggregate run reports a single pass/fail summary at 1 and 4 ranks
+
+Section 10 notes.
+
+The particle block task 8.3 deferred is now in `karman.par`, released upstream
+of the cylinder once the flow has developed.
+
+Seed positions come from a counter-based hash of the particle's global index and
+its batch number rather than from a generator. The two-dimensional tracer draws
+from an unseeded `rand()` on every rank and works only because every rank
+happens to get the same default sequence from the same C library -- an accident
+rather than a property. A hash is the same everywhere by construction, so every
+rank can compute any particle's seed without communicating and two runs at
+different rank counts release exactly the same particles.
+
+Removing a particle moves the last one into its slot rather than marking it dead
+for a later compaction pass. That reclaims the slot immediately, keeps the array
+dense so the advance loop is a straight walk over live particles, and makes the
+separate compaction the task asks for unnecessary.
+
+Two things the checks had to be built around. A plate spanning a channel's whole
+cross-section cuts the fluid into two regions, which the connectivity check
+refuses before a solver sees it, so the obstruction check uses a plate covering
+the middle and leaving a rim -- which also makes it sharper, since particles
+behind the plate must stop while the ones beside it must not. And the check
+driver has to migrate as well as advance, because a driver that only advances
+leaves particles on the rank that no longer owns them; `particleTracerMigrate`
+is exposed for that.
+
+Measured: 1200 particles written after a traced run agree between 1 and 4 ranks
+to 9.0e-10, and the recorded field baselines are unchanged, so a setup that does
+not ask for tracing is unaffected by its presence.

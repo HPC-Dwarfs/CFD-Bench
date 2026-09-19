@@ -51,6 +51,23 @@ kmax          50	   # number of interior cells in z-direction
 
 geometryFile  geometry/karman.vox   # the cylinder
 
+# Particle Tracing Data:
+# -----------------------
+# Tracers released upstream of the cylinder, so the wake shows up as streaklines.
+# Written to vis_files/ as VTK polydata, which opens next to the field output.
+
+numberOfParticles   400     # released per batch
+startTime           20.0    # once the flow has developed
+injectTimePeriod    1.0     # between batches
+writeTimePeriod     0.5     # between output files
+
+x1                  0.2     # the seed box, upstream of the cylinder
+y1                  0.5
+z1                  0.5
+x2                  0.4
+y2                  7.5
+z2                  7.5
+
 # Time Data:
 # ---------
 

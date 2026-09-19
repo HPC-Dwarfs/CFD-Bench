@@ -27,7 +27,13 @@ void initParameter(Parameter *param)
   param->levels     = 5;
   param->presmooth  = 5;
   param->postsmooth = 5;
-  param->geometryFile = NULL;
+  param->geometryFile      = NULL;
+  param->numberOfParticles = 0;
+  param->startTime         = 0.0;
+  param->injectTimePeriod  = 0.0;
+  param->writeTimePeriod   = 0.0;
+  param->x1 = param->y1 = param->z1 = 0.0;
+  param->x2 = param->y2 = param->z2 = 0.0;
 }
 
 void readParameter(Parameter *param, const char *filename)
@@ -102,6 +108,16 @@ void readParameter(Parameter *param, const char *filename)
       PARSE_REAL(v_init);
       PARSE_REAL(w_init);
       PARSE_REAL(p_init);
+      PARSE_INT(numberOfParticles);
+      PARSE_REAL(startTime);
+      PARSE_REAL(injectTimePeriod);
+      PARSE_REAL(writeTimePeriod);
+      PARSE_REAL(x1);
+      PARSE_REAL(y1);
+      PARSE_REAL(z1);
+      PARSE_REAL(x2);
+      PARSE_REAL(y2);
+      PARSE_REAL(z2);
     }
   }
 

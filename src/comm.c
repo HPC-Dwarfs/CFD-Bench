@@ -332,6 +332,57 @@ void commGetOffsets(CommType *c, int offsets[], int kmax, int jmax, int imax)
 #endif
 }
 
+/* Inverse of sizeOfRank: which coordinate along one axis owns global cell g.
+ * The first N % size ranks carry one cell more than the rest, so the cells
+ * below that boundary are in blocks of q + 1 and the rest in blocks of q. */
+static int coordOfCell(int g, int size, int n)
+{
+  int q   = n / size;
+  int rem = n % size;
+
+  if (g < 0) {
+    g = 0;
+  }
+  if (g > n - 1) {
+    g = n - 1;
+  }
+
+  if (q == 0) {
+    /* More ranks than cells: the first n ranks hold one each. */
+    return g;
+  }
+
+  if (g < rem * (q + 1)) {
+    return g / (q + 1);
+  }
+
+  return rem + (g - rem * (q + 1)) / q;
+}
+
+int commRankOfCell(
+    CommType *c, int gi, int gj, int gk, int imax, int jmax, int kmax)
+{
+#if defined(_MPI)
+  int coords[NCORDS];
+  coords[ICORD] = coordOfCell(gi, c->dims[ICORD], imax);
+  coords[JCORD] = coordOfCell(gj, c->dims[JCORD], jmax);
+  coords[KCORD] = coordOfCell(gk, c->dims[KCORD], kmax);
+
+  int rank      = 0;
+  MPI_Cart_rank(c->comm, coords, &rank);
+  return rank;
+#else
+  (void)c;
+  (void)gi;
+  (void)gj;
+  (void)gk;
+  (void)imax;
+  (void)jmax;
+  (void)kmax;
+  return 0;
+#endif
+}
+
 #define G(v, i, j, k)                                                                    \
   v[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
 

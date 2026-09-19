@@ -13,6 +13,7 @@
 #include "fielddump.h"
 #endif
 #include "parameter.h"
+#include "particletracing.h"
 #include "profiler.h"
 #include "progress.h"
 #include "solver.h"
@@ -67,6 +68,9 @@ int main(int argc, char **argv)
     }
   }
 
+  ParticleTracerType tracer;
+  particleTracerInit(&tracer, &d, &p);
+
   double tau = d.tau;
   double te  = d.te;
   double t   = 0.0;
@@ -101,6 +105,8 @@ int main(int argc, char **argv)
         fprintf(forceFile, "%.10e %.10e %.10e %.10e\n", t, fx, fy, fz);
       }
     }
+
+    particleTracerStep(&tracer, &d, t);
 
     t += d.dt;
     nt++;
@@ -181,6 +187,8 @@ int main(int argc, char **argv)
   if (commIsMaster(s.comm)) {
     printf("Result output took %.2fs\n", timeStop - timeStart);
   }
+
+  particleTracerFinalize(&tracer, &d);
 
   if (forceFile != NULL) {
     fclose(forceFile);

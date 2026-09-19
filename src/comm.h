@@ -47,6 +47,11 @@ extern void commReduceAll(double *v, int op);
 extern void commReduce(double *v, double *o, int count, int op);
 extern int commIsBoundary(CommType *c, DirectionType direction);
 extern void commGetOffsets(CommType *c, int offsets[], int kmax, int jmax, int imax);
+/* Which rank holds the global cell (gi, gj, gk). Particle migration needs it:
+ * a particle can land anywhere in one step, so its new owner has to be found
+ * from its position rather than by asking the neighbours. */
+extern int commRankOfCell(
+    CommType *c, int gi, int gj, int gk, int imax, int jmax, int kmax);
 extern void commFreeCommunicator(CommType *comm);
 extern void commUpdateDatatypes(
     CommType *oldcomm, CommType *newcomm, int imaxLocal, int jmaxLocal, int kmaxLocal);

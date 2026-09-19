@@ -20,6 +20,11 @@ typedef struct {
   /* Obstacle geometry: a path to a voxel volume, or an analytic body such as
    * "sphere:xc,yc,zc,r". Absent means an obstacle-free domain. */
   char *geometryFile;
+  /* Particle tracing. Absent, or a count of zero, means no tracing at all. The
+   * seed region is the axis-aligned box (x1,y1,z1) to (x2,y2,z2). */
+  int numberOfParticles;
+  double startTime, injectTimePeriod, writeTimePeriod;
+  double x1, y1, z1, x2, y2, z2;
 } Parameter;
 
 void initParameter(Parameter *);

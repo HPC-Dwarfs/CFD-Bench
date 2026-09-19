@@ -240,6 +240,41 @@ The run header records which geometry is in use, the voxel dimensions and a
 checksum of the file, so a silently edited volume cannot be mistaken for the
 reference case.
 
+## Particle tracing
+
+A setup can release massless tracer particles, so that flow around a body shows
+up as streaklines. It is off unless asked for: a setup with no particle block
+produces exactly the fields and files it would with no tracer present.
+
+```
+numberOfParticles   400     # released per batch; 0 or absent means no tracing
+startTime           20.0    # when the first batch is released
+injectTimePeriod    1.0     # between batches
+writeTimePeriod     0.5     # between output files
+
+x1  0.2                     # the seed box, one corner
+y1  0.5
+z1  0.5
+x2  0.4                     # and the other
+y2  7.5
+z2  7.5
+```
+
+Positions are written to `vis_files/particles_NNNNN.vtk` as VTK polydata, which
+opens in ParaView alongside the field output.
+
+Seed positions come from a hash of the particle's index and batch number rather
+than from a random number generator, so the same setup releases the same
+particles in every run and at every rank count, with no communication needed to
+arrange it.
+
+A particle is stopped by the **apertures of the faces its path crosses**, not by
+the volume fraction of the cell it lands in. That distinction is the point: a
+body one face thick has fluid on both sides, so a destination-cell test sees
+nothing in the way and the particle passes straight through it. Particles that
+meet a body, or leave through a domain boundary, are removed and counted; the
+run reports how many of each at the end.
+
 ## Tests
 
 ```sh
@@ -260,6 +295,7 @@ The pieces can also be run on their own:
 | `tests/check-geometry-ranks.sh` | apertures are identical whatever the rank count |
 | `tests/check-solver-obstacle.sh` | the three solvers agree with a body present |
 | `tests/check-schaefer-turek.sh` | drag, lift and Strouhal against their published ranges |
+| `tests/check-particles.sh` | particle output, and that it does not depend on the rank count |
 | `tests/record-baseline.sh [-v]` | record or verify the field baselines |
 
 Baselines and test geometry are generated, not committed; `record-baseline.sh`
