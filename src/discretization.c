@@ -10,7 +10,10 @@
 #include "allocate.h"
 #include "comm.h"
 #include "discretization.h"
+#include "geometry.h"
+#include "geometry-voxel.h"
 #include "parameter.h"
+#include "pressure-bc.h"
 #include "util.h"
 
 static void printConfig(Discretization *s)
@@ -56,6 +59,14 @@ void initDiscretization(Discretization *s, Parameter *params)
   s->bcFront      = params->bcFront;
   s->bcBack       = params->bcBack;
 
+  pressureBcInit(&s->pressureBc,
+      params->bcLeft,
+      params->bcRight,
+      params->bcBottom,
+      params->bcTop,
+      params->bcFront,
+      params->bcBack);
+
   s->grid.imax    = params->imax;
   s->grid.jmax    = params->jmax;
   s->grid.kmax    = params->kmax;
@@ -92,6 +103,10 @@ void initDiscretization(Discretization *s, Parameter *params)
   s->f          = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
   s->g          = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
   s->h          = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Ax         = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Ay         = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Az         = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Lambda     = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
 
   for (int i = 0; i < size; i++) {
     s->u[i]   = params->u_init;
@@ -102,6 +117,12 @@ void initDiscretization(Discretization *s, Parameter *params)
     s->f[i]   = 0.0;
     s->g[i]   = 0.0;
     s->h[i]   = 0.0;
+    /* Obstacle-free until a producer says otherwise, halo included, so that no
+     * exchange is needed to make the geometry consistent. */
+    s->Ax[i]     = 1.0;
+    s->Ay[i]     = 1.0;
+    s->Az[i]     = 1.0;
+    s->Lambda[i] = 1.0;
   }
 
   double dx        = s->grid.dx;
@@ -110,6 +131,45 @@ void initDiscretization(Discretization *s, Parameter *params)
 
   double invSqrSum = 1.0 / (dx * dx) + 1.0 / (dy * dy) + 1.0 / (dz * dz);
   s->dtBound       = 0.5 * s->re * 1.0 / invSqrSum;
+
+  /* Obstacle geometry. Everything downstream sees only the four aperture
+   * arrays; this is the only place the spec and the file are looked at. */
+  GeometrySpecType spec;
+  geometryParseSpec(&spec, params->geometryFile);
+
+  int offsets[NDIMS] = { 0, 0, 0 };
+  commGetOffsets(&s->comm, offsets, params->kmax, params->jmax, params->imax);
+
+  GeometryDomainType domain = { .imaxLocal = imaxLocal,
+    .jmaxLocal                             = jmaxLocal,
+    .kmaxLocal                             = kmaxLocal,
+    .iOffset                               = offsets[IDIM],
+    .jOffset                               = offsets[JDIM],
+    .kOffset                               = offsets[KDIM],
+    .imax                                  = params->imax,
+    .jmax                                  = params->jmax,
+    .kmax                                  = params->kmax,
+    .dx                                    = dx,
+    .dy                                    = dy,
+    .dz                                    = dz,
+    .xlength                               = params->xlength,
+    .ylength                               = params->ylength,
+    .zlength                               = params->zlength };
+
+  if (spec.kind == GEOMETRY_VOXEL) {
+    geometryVoxelLoad(spec.file, &domain);
+  }
+
+  geometryProduce(&spec, &domain, s->Ax, s->Ay, s->Az, s->Lambda);
+
+  if (spec.kind != GEOMETRY_NONE) {
+    geometryValidateConnectivity(
+        &s->comm, &domain, s->Ax, s->Ay, s->Az, s->Lambda, 1);
+  }
+
+  if (commIsMaster(&s->comm)) {
+    geometryPrintHeader(&spec, &domain);
+  }
 
 #ifdef VERBOSE
   printConfig(s);
@@ -400,32 +460,57 @@ static double maxElement(Discretization *s, double *m)
   return maxval;
 }
 
-void normalizePressure(Discretization *s)
+/* Subtract the mean of a field over the interior, in place. */
+static void removeMean(Discretization *s, double *field)
 {
   int imaxLocal = s->comm.imaxLocal;
   int jmaxLocal = s->comm.jmaxLocal;
   int kmaxLocal = s->comm.kmaxLocal;
 
-  double *p     = s->p;
-  double avgP   = 0.0;
+  double *p     = field;
+  double mean   = 0.0;
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        avgP += P(i, j, k);
+        mean += P(i, j, k);
       }
     }
   }
-  commReduceAll(&avgP, SUM);
-  avgP /= (s->grid.imax * s->grid.jmax * s->grid.kmax);
+  commReduceAll(&mean, SUM);
+  mean /= ((double)s->grid.imax * s->grid.jmax * s->grid.kmax);
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        P(i, j, k) = P(i, j, k) - avgP;
+        P(i, j, k) = P(i, j, k) - mean;
       }
     }
   }
+}
+
+/*
+ * Handle the pressure null space, where there is one.
+ *
+ * Where every boundary imposes a zero normal pressure gradient the operator is
+ * singular: constants are in its null space, the right-hand side has to lie in
+ * its range for a solution to exist at all, and the iterate is free to drift.
+ * Both halves are dealt with here -- the right-hand side is projected onto the
+ * range by removing its mean, and the constant is removed from the pressure.
+ *
+ * Where a boundary pins the pressure the operator is non-singular and neither
+ * is appropriate, so nothing is done. This used to run unconditionally every
+ * hundredth step, which both failed to keep a singular setup from drifting
+ * between those steps and perturbed a non-singular one that did not need it.
+ */
+void normalizePressure(Discretization *s)
+{
+  if (!pressureBcIsSingular(&s->pressureBc)) {
+    return;
+  }
+
+  removeMean(s, s->rhs);
+  removeMean(s, s->p);
 }
 
 void computeTimestep(Discretization *s)

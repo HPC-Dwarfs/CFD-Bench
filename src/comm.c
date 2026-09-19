@@ -318,6 +318,17 @@ void commGetOffsets(CommType *c, int offsets[], int kmax, int jmax, int imax)
     sum += sizeOfRank(i, c->dims[KCORD], kmax);
   }
   offsets[KDIM] = sum;
+#else
+  /* A serial build owns the whole domain, so every offset is zero. Without this
+   * the caller's array is left untouched, which reads as whatever was on the
+   * stack -- and geometry, which places a rank on the global grid, needs the
+   * answer in both builds. */
+  (void)kmax;
+  (void)jmax;
+  (void)imax;
+  offsets[IDIM] = 0;
+  offsets[JDIM] = 0;
+  offsets[KDIM] = 0;
 #endif
 }
 
@@ -536,9 +547,16 @@ void commPartition(CommType *c, int kmax, int jmax, int imax)
   MPI_Cart_shift(c->comm, KCORD, 1, &c->neighbours[FRONT], &c->neighbours[BACK]);
   MPI_Cart_get(c->comm, NCORDS, c->dims, periods, c->coords);
 
-  c->imaxLocal = sizeOfRank(c->coords[KDIM], dims[ICORD], imax);
-  c->jmaxLocal = sizeOfRank(c->coords[JDIM], dims[JCORD], jmax);
-  c->kmaxLocal = sizeOfRank(c->coords[IDIM], dims[KCORD], kmax);
+  /* coords and dims are both in coordinate order (ICORD, JCORD, KCORD), which
+   * is what MPI_Cart_get filled and what MPI_Cart_shift above used. Index them
+   * with the coordinate enum rather than the dimension enum: the two agree
+   * numerically -- KDIM and ICORD are both 0, IDIM and KCORD are both 2 -- so
+   * the old pairing computed the right sizes, but it read as though the x size
+   * came from the z coordinate, which is a trap for anything that has to place
+   * a rank on the global grid. */
+  c->imaxLocal = sizeOfRank(c->coords[ICORD], dims[ICORD], imax);
+  c->jmaxLocal = sizeOfRank(c->coords[JCORD], dims[JCORD], jmax);
+  c->kmaxLocal = sizeOfRank(c->coords[KCORD], dims[KCORD], kmax);
 
   // setup buffer types for communication
   setupCommunication(c, LEFT, BULK);
@@ -585,6 +603,19 @@ void commUpdateDatatypes(
 
   newcomm->rank      = oldcomm->rank;
   newcomm->size      = oldcomm->size;
+
+  /* The coarse level sits on the same Cartesian topology as the fine one, so it
+   * keeps the same position in it. Without this, coords and dims are whatever
+   * was in the new structure, and commIsBoundary -- which reads both -- answers
+   * from uninitialized memory on every coarse level. */
+  for (int i = 0; i < NDIMS; i++) {
+    newcomm->coords[i] = oldcomm->coords[i];
+    newcomm->dims[i]   = oldcomm->dims[i];
+  }
+
+  for (int i = 0; i < NDIRS; i++) {
+    newcomm->neighbours[i] = oldcomm->neighbours[i];
+  }
 
   newcomm->imaxLocal = imaxLocal / 2;
   newcomm->jmaxLocal = jmaxLocal / 2;

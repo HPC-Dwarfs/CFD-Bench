@@ -1,0 +1,44 @@
+#==============================================================================
+#   canal, reduced for baseline recording.
+#   Derived from ../../canal.par; see dcavity-baseline.par for the rationale.
+#==============================================================================
+
+name canal
+
+bcLeft    3
+bcRight   3
+bcBottom  1
+bcTop     1
+bcFront   1
+bcBack    1
+
+gx     0.0
+gy     0.0
+gz     0.0
+
+re            100.0
+
+u_init        1.0
+v_init        0.0
+w_init        0.0
+p_init        0.0
+
+xlength       30.0
+ylength       4.0
+zlength       4.0
+imax          50
+jmax          10
+kmax          10
+
+te       0.6
+dt       0.02
+tau      0.5
+
+levels        2
+presmooth     5
+postsmooth    5
+
+itermax       50000
+eps           0.0001
+omg           1.8
+gamma         0.9

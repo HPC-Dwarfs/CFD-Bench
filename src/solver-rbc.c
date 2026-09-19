@@ -8,8 +8,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "coloring.h"
 #include "comm.h"
 #include "parameter.h"
+#include "pressure-bc.h"
 #include "profiler.h"
 #include "solver.h"
 #include "timing.h"
@@ -24,15 +26,7 @@
 #define RHSRED(ic, j, k) rhsRed[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
 #define RHSBLACK(ic, j, k) rhsBlack[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
 
-void initSolver(Solver *s, Discretization *d, Parameter *p)
-{
-  s->eps     = p->eps;
-  s->omega   = p->omg;
-  s->itermax = p->itermax;
-  s->grid    = &d->grid;
-  s->comm    = &d->comm;
-  s->problem = p->name;
-}
+void initSolver(Solver *s, Discretization *d, Parameter *p) { solverBaseInit(s, d, p); }
 
 double solve(Solver *s, double *p, const double *rhs)
 {
@@ -43,6 +37,10 @@ double solve(Solver *s, double *p, const double *rhs)
   int imax      = s->grid->imax;
   int jmax      = s->grid->jmax;
   int kmax      = s->grid->kmax;
+
+  int iOffset   = s->iOffset;
+  int jOffset   = s->jOffset;
+  int kOffset   = s->kOffset;
 
   double eps    = s->eps;
   int itermax   = s->itermax;
@@ -55,25 +53,28 @@ double solve(Solver *s, double *p, const double *rhs)
 
   double factor =
       s->omega * 0.5 * (dx2 * dy2 * dz2) / (dy2 * dz2 + dx2 * dz2 + dx2 * dy2);
-  double epssq = eps * eps;
-  int it       = 0;
-  double res   = 1.0;
+  double epssq    = eps * eps;
+  double cells    = (double)imax * jmax * kmax;
+  int it          = 0;
+
+  /* See solverbase.c: accumulated in-sweep for loop control only, reset every
+   * iteration, with the reported value computed once at the end. */
+  double sweepRes = DBL_MAX;
 
 #ifdef _MPI
-  int pass, ksw, jsw, isw;
 
   TIMESTART
-  while ((res >= epssq) && (it < itermax)) {
-    ksw = 1;
+  while ((sweepRes >= epssq) && (it < itermax)) {
+    sweepRes = 0.0;
 
-    for (pass = 0; pass < 2; pass++) {
-      jsw = ksw;
+    for (int color = 0; color < 2; color++) {
       PROFILE(COMM, commExchange(s->comm, p));
 
       for (int k = 1; k < kmaxLocal + 1; k++) {
-        isw = jsw;
         for (int j = 1; j < jmaxLocal + 1; j++) {
-          for (int i = isw; i < imaxLocal + 1; i += 2) {
+          int iStart = colorRowStart(color, j, k, iOffset, jOffset, kOffset);
+
+          for (int i = iStart; i < imaxLocal + 1; i += 2) {
 
             double r = RHS(i, j, k) -
                        ((P(i + 1, j, k) - 2.0 * P(i, j, k) + P(i - 1, j, k)) * idx2 +
@@ -81,68 +82,19 @@ double solve(Solver *s, double *p, const double *rhs)
                            (P(i, j, k + 1) - 2.0 * P(i, j, k) + P(i, j, k - 1)) * idz2);
 
             P(i, j, k) -= (factor * r);
-            res += (r * r);
+            sweepRes += (r * r);
           }
-          isw = 3 - isw;
-        }
-        jsw = 3 - jsw;
-      }
-      ksw = 3 - ksw;
-    }
-
-    if (commIsBoundary(s->comm, FRONT)) {
-      for (int j = 1; j < jmaxLocal + 1; j++) {
-        for (int i = 1; i < imaxLocal + 1; i++) {
-          P(i, j, 0) = P(i, j, 1);
         }
       }
+
+      pressureBcApply(&s->bc, s->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
     }
 
-    if (commIsBoundary(s->comm, BACK)) {
-      for (int j = 1; j < jmaxLocal + 1; j++) {
-        for (int i = 1; i < imaxLocal + 1; i++) {
-          P(i, j, kmaxLocal + 1) = P(i, j, kmaxLocal);
-        }
-      }
-    }
-
-    if (commIsBoundary(s->comm, BOTTOM)) {
-      for (int k = 1; k < kmaxLocal + 1; k++) {
-        for (int i = 1; i < imaxLocal + 1; i++) {
-          P(i, 0, k) = P(i, 1, k);
-        }
-      }
-    }
-
-    if (commIsBoundary(s->comm, TOP)) {
-      for (int k = 1; k < kmaxLocal + 1; k++) {
-        for (int i = 1; i < imaxLocal + 1; i++) {
-          P(i, jmaxLocal + 1, k) = P(i, jmaxLocal, k);
-        }
-      }
-    }
-
-    if (commIsBoundary(s->comm, LEFT)) {
-      for (int k = 1; k < kmaxLocal + 1; k++) {
-        for (int j = 1; j < jmaxLocal + 1; j++) {
-          P(0, j, k) = P(1, j, k);
-        }
-      }
-    }
-
-    if (commIsBoundary(s->comm, RIGHT)) {
-      for (int k = 1; k < kmaxLocal + 1; k++) {
-        for (int j = 1; j < jmaxLocal + 1; j++) {
-          P(imaxLocal + 1, j, k) = P(imaxLocal, j, k);
-        }
-      }
-    }
-
-    commReduceAll(&res, SUM);
-    res = res / (double)(imax * jmax * kmax);
+    commReduceAll(&sweepRes, SUM);
+    sweepRes = sweepRes / cells;
 #ifdef DEBUG
-    if (commIsMaster(&s->comm)) {
-      printf("%d Residuum: %e\n", it, res);
+    if (commIsMaster(s->comm)) {
+      printf("%d Residuum: %e\n", it, sweepRes);
     }
 #endif
 
@@ -175,8 +127,19 @@ double solve(Solver *s, double *p, const double *rhs)
     }
   }
 
+  /* A wall mirrors the interior into the halo, an outflow reflects it oddly.
+   * Every boundary of this layout is a physical one, because the compressed
+   * path is the serial path. */
+  double sgnLeft   = (s->bc.type[LEFT] == OUTFLOW) ? -1.0 : 1.0;
+  double sgnRight  = (s->bc.type[RIGHT] == OUTFLOW) ? -1.0 : 1.0;
+  double sgnBottom = (s->bc.type[BOTTOM] == OUTFLOW) ? -1.0 : 1.0;
+  double sgnTop    = (s->bc.type[TOP] == OUTFLOW) ? -1.0 : 1.0;
+  double sgnFront  = (s->bc.type[FRONT] == OUTFLOW) ? -1.0 : 1.0;
+  double sgnBack   = (s->bc.type[BACK] == OUTFLOW) ? -1.0 : 1.0;
+
   TIMESTART
-  while ((res >= epssq) && (it < itermax)) {
+  while ((sweepRes >= epssq) && (it < itermax)) {
+    sweepRes = 0.0;
 
     /* Pass 0: update red cells (neighbors live in pBlack) */
     for (int k = 1; k <= kmaxLocal; k++) {
@@ -198,7 +161,7 @@ double solve(Solver *s, double *p, const double *rhs)
                       idz2);
 
           PRED(ic, j, k) -= factor * r;
-          res += r * r;
+          sweepRes += r * r;
         }
       }
     }
@@ -223,63 +186,67 @@ double solve(Solver *s, double *p, const double *rhs)
                       idz2);
 
           PBLACK(ic, j, k) -= factor * r;
-          res += r * r;
+          sweepRes += r * r;
         }
       }
     }
 
-    /* Boundary conditions in compressed layout (Neumann: ghost = interior).
-     * j/k BCs: ghost and interior differ by 1 in j or k, so they have
-     * opposite colors but the same compressed index ic. */
+    /* The pressure boundary condition in the compressed layout. The sign is
+     * what makes it the setup's condition rather than a wall everywhere: +1
+     * mirrors the interior into the halo (zero normal gradient), -1 reflects it
+     * oddly (zero pressure on the boundary face).
+     *
+     * j/k boundaries: halo and interior differ by 1 in j or k, so they have
+     * opposite colours but the same compressed index ic. */
 
-    /* k-direction BCs */
+    /* k-direction */
     for (int j = 1; j <= jmaxLocal; j++) {
       for (int ic = 0; ic < Nc; ic++) {
-        PRED(ic, j, 0)               = PBLACK(ic, j, 1);
-        PBLACK(ic, j, 0)             = PRED(ic, j, 1);
-        PRED(ic, j, kmaxLocal + 1)   = PBLACK(ic, j, kmaxLocal);
-        PBLACK(ic, j, kmaxLocal + 1) = PRED(ic, j, kmaxLocal);
+        PRED(ic, j, 0)               = sgnFront * PBLACK(ic, j, 1);
+        PBLACK(ic, j, 0)             = sgnFront * PRED(ic, j, 1);
+        PRED(ic, j, kmaxLocal + 1)   = sgnBack * PBLACK(ic, j, kmaxLocal);
+        PBLACK(ic, j, kmaxLocal + 1) = sgnBack * PRED(ic, j, kmaxLocal);
       }
     }
 
-    /* j-direction BCs */
+    /* j-direction */
     for (int k = 1; k <= kmaxLocal; k++) {
       for (int ic = 0; ic < Nc; ic++) {
-        PRED(ic, 0, k)               = PBLACK(ic, 1, k);
-        PBLACK(ic, 0, k)             = PRED(ic, 1, k);
-        PRED(ic, jmaxLocal + 1, k)   = PBLACK(ic, jmaxLocal, k);
-        PBLACK(ic, jmaxLocal + 1, k) = PRED(ic, jmaxLocal, k);
+        PRED(ic, 0, k)               = sgnBottom * PBLACK(ic, 1, k);
+        PBLACK(ic, 0, k)             = sgnBottom * PRED(ic, 1, k);
+        PRED(ic, jmaxLocal + 1, k)   = sgnTop * PBLACK(ic, jmaxLocal, k);
+        PBLACK(ic, jmaxLocal + 1, k) = sgnTop * PRED(ic, jmaxLocal, k);
       }
     }
 
-    /* i-direction BCs: i=0 and i=1 have opposite colors, both at ic=0.
-     * i=imax+1 and i=imax also have opposite colors. */
+    /* i-direction: i=0 and i=1 have opposite colours, both at ic=0.
+     * i=imax+1 and i=imax also have opposite colours. */
     for (int k = 1; k <= kmaxLocal; k++) {
       for (int j = 1; j <= jmaxLocal; j++) {
         int pjk = (j + k) % 2;
 
-        /* Left: P(0,j,k) = P(1,j,k) */
+        /* Left halo from the first interior cell */
         if (pjk == 0) {
-          PRED(0, j, k) = PBLACK(0, j, k);
+          PRED(0, j, k) = sgnLeft * PBLACK(0, j, k);
         } else {
-          PBLACK(0, j, k) = PRED(0, j, k);
+          PBLACK(0, j, k) = sgnLeft * PRED(0, j, k);
         }
 
-        /* Right: P(imax+1,j,k) = P(imax,j,k) */
+        /* Right halo from the last interior cell */
         int icg = (imaxLocal + 1) / 2;
         int ici = imaxLocal / 2;
         if ((imaxLocal + 1 + j + k) % 2 == 0) {
-          PRED(icg, j, k) = PBLACK(ici, j, k);
+          PRED(icg, j, k) = sgnRight * PBLACK(ici, j, k);
         } else {
-          PBLACK(icg, j, k) = PRED(ici, j, k);
+          PBLACK(icg, j, k) = sgnRight * PRED(ici, j, k);
         }
       }
     }
 
-    res = res / (double)(imax * jmax * kmax);
+    sweepRes = sweepRes / cells;
 #ifdef DEBUG
-    if (commIsMaster(&s->comm)) {
-      printf("%d Residuum: %e\n", it, res);
+    if (commIsMaster(s->comm)) {
+      printf("%d Residuum: %e\n", it, sweepRes);
     }
 #endif
     it++;
@@ -307,9 +274,23 @@ double solve(Solver *s, double *p, const double *rhs)
 
 #endif /* _MPI */
 
+  /* Computed from the field that is about to be returned -- in the compressed
+   * path that means after the scatter above, not from the split arrays. */
+  double res = pressureResidualNorm(s->comm,
+      &s->bc,
+      p,
+      rhs,
+      imaxLocal,
+      jmaxLocal,
+      kmaxLocal,
+      s->grid->dx,
+      s->grid->dy,
+      s->grid->dz,
+      cells);
+
 #ifdef VERBOSE
   if (commIsMaster(s->comm)) {
-    printf("Solver took %d iterations to reach %f\n", it, sqrt(res));
+    printf("Solver took %d iterations to reach %e\n", it, sqrt(res));
   }
 
   printProfile(s->comm, it);

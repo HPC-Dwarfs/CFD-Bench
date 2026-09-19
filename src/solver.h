@@ -8,6 +8,7 @@
 #include "discretization.h"
 #include "grid.h"
 #include "parameter.h"
+#include "pressure-bc.h"
 
 typedef struct {
   /* geometry and grid information */
@@ -16,6 +17,8 @@ typedef struct {
   double *p, *rhs;
   double *f, *g, *h;
   double *u, *v, *w;
+  /* obstacle geometry, owned by the discretization */
+  const double *Ax, *Ay, *Az, *Lambda;
   /* parameters */
   double eps, omega;
   double re, tau, gamma;
@@ -26,12 +29,59 @@ typedef struct {
   double dtBound;
   char *problem;
   int bcLeft, bcRight, bcBottom, bcTop, bcFront, bcBack;
+  /* the pressure boundary condition the setup asks for, shared by every solver */
+  PressureBcType bc;
+  /* global index of this rank's first interior cell, minus one, so that the
+   * red-black colouring can be taken from a cell's global position */
+  int iOffset, jOffset, kOffset;
   /* communication */
   double **r, **e;
   int levels, presmooth, postsmooth;
+  /* the multigrid level hierarchy: extents, mesh, communicator and work arrays
+   * per level. Opaque outside solver-mg.c, which is the only file that builds
+   * or reads it. */
+  void *mgLevels;
   CommType *comm;
 } Solver;
 
 extern double solve(Solver *, double *, const double *);
 extern void initSolver(Solver *, Discretization *, Parameter *);
+
+/* Everything the three solvers set up identically. Each initSolver calls this
+ * first and then adds whatever only it needs. */
+extern void solverBaseInit(Solver *s, Discretization *d, Parameter *p);
+
+#if defined(TEST) && defined(SOLVER_mg)
+/*
+ * Exposed for the check drivers only. The multigrid transfer operators and the
+ * V-cycle are otherwise internal to solver-mg.c; a driver needs to drive them
+ * one step at a time to check a constant restricts to a constant, that
+ * prolongation leaves no fine cell untouched, and that a coarse level uses its
+ * own mesh.
+ */
+extern int mgTestLevels(Solver *s);
+extern void mgTestLevelExtents(Solver *s, int level, int *im, int *jm, int *km);
+extern void mgTestLevelMesh(Solver *s, int level, double *dx, double *dy, double *dz);
+extern double *mgTestLevelE(Solver *s, int level);
+extern double *mgTestLevelR(Solver *s, int level);
+extern void mgTestRestrict(Solver *s, int level);
+extern void mgTestProlongate(Solver *s, int level);
+extern void mgTestResidualField(Solver *s, int level, double *p, const double *rhs);
+extern void mgTestVcycle(Solver *s, double *p, const double *rhs);
+extern void mgTestSmooth(Solver *s, int level, double *p, const double *rhs, int sweeps);
+#endif
+
+/* Mean square residual of p against rhs, for comparison with eps * eps. Takes
+ * the extents and mesh of one level, so a multigrid level can use it too. */
+extern double pressureResidualNorm(CommType *comm,
+    const PressureBcType *bc,
+    double *p,
+    const double *rhs,
+    int imaxLocal,
+    int jmaxLocal,
+    int kmaxLocal,
+    double dx,
+    double dy,
+    double dz,
+    double globalCells);
 #endif

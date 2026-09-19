@@ -27,6 +27,7 @@ void initParameter(Parameter *param)
   param->levels     = 5;
   param->presmooth  = 5;
   param->postsmooth = 5;
+  param->geometryFile = NULL;
 }
 
 void readParameter(Parameter *param, const char *filename)
@@ -50,8 +51,15 @@ void readParameter(Parameter *param, const char *filename)
       ;
     line[i]   = '\0';
 
-    char *tok = strtok(line, " ");
-    char *val = strtok(NULL, " ");
+    /* Split on any whitespace, not on spaces alone, and trim what is left.
+     * A value used to keep whatever trailing whitespace the line carried, so a
+     * line such as "name dcavity" with no trailing comment produced the string
+     * "dcavity\n". Every setup-specific boundary condition is selected by
+     * strcmp on that name, so it silently did nothing -- the shipped setups
+     * only worked because each happened to have a trailing comment for the
+     * '#' strip above to remove. */
+    char *tok = strtok(line, " \t\n\r\f\v");
+    char *val = strtok(NULL, " \t\n\r\f\v");
 
 #define PARSE_PARAM(p, f)                                                                \
   if (strncmp(tok, #p, sizeof(#p) / sizeof(#p[0]) - 1) == 0) {                           \
@@ -83,6 +91,7 @@ void readParameter(Parameter *param, const char *filename)
       PARSE_REAL(gy);
       PARSE_REAL(gz);
       PARSE_STRING(name);
+      PARSE_STRING(geometryFile);
       PARSE_INT(bcLeft);
       PARSE_INT(bcRight);
       PARSE_INT(bcBottom);

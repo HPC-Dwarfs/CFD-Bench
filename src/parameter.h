@@ -17,6 +17,9 @@ typedef struct {
   int bcLeft, bcRight, bcBottom, bcTop, bcFront, bcBack;
   double u_init, v_init, w_init, p_init;
   int levels, presmooth, postsmooth;
+  /* Obstacle geometry: a path to a voxel volume, or an analytic body such as
+   * "sphere:xc,yc,zc,r". Absent means an obstacle-free domain. */
+  char *geometryFile;
 } Parameter;
 
 void initParameter(Parameter *);

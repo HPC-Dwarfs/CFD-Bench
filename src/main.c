@@ -8,6 +8,9 @@
 
 #include "allocate.h"
 #include "discretization.h"
+#ifdef TEST
+#include "fielddump.h"
+#endif
 #include "parameter.h"
 #include "profiler.h"
 #include "progress.h"
@@ -65,9 +68,10 @@ int main(int argc, char **argv)
     setSpecialBoundaryCondition(&d);
     computeFG(&d);
     computeRHS(&d);
-    if (nt % 100 == 0) {
-      normalizePressure(&d);
-    }
+    /* Every step, not every hundredth: where the operator is singular the
+     * right-hand side has to be made compatible before each solve, not
+     * occasionally. It is a no-op where a boundary pins the pressure. */
+    normalizePressure(&d);
     res = solve(&s, d.p, d.rhs);
     adaptUV(&d);
 
@@ -93,6 +97,13 @@ int main(int argc, char **argv)
   if (commIsMaster(s.comm)) {
     printf("Solution took %.2fs\n", timeStop - timeStart);
   }
+
+#ifdef TEST
+  const char *dumpPath = fieldDumpPath();
+  if (dumpPath != NULL) {
+    fieldDumpWrite(&d.comm, s.grid, dumpPath, d.p, d.u, d.v, d.w);
+  }
+#endif
 
   timeStart = getTimeStamp();
 #ifdef _VTK_WRITER_MPI

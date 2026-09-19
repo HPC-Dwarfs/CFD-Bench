@@ -32,9 +32,25 @@ OBJ      += $(BUILD_DIR)/vtkWriter-$(VTK_OUTPUT_FMT).o
 OBJ      += $(BUILD_DIR)/solver-$(SOLVER).o
 ASM       = $(patsubst $(BUILD_DIR)/%.o, $(BUILD_DIR)/%.s, $(OBJ))
 
+# Test build path. The same sources are compiled a second time with -DTEST into
+# their own object directory, so the normal build is never affected. That build
+# produces the solver with the field dump enabled, plus one binary per check
+# driver in $(CHECK_DIR).
+TEST_BUILD_DIR  = $(BUILD_DIR)/test
+TEST_TARGET     = $(TARGET)-test
+CHECK_DIR       = ./tests/checks
+CHECK_SRC       = $(wildcard $(CHECK_DIR)/*.c)
+CHECK_BIN       = $(patsubst $(CHECK_DIR)/%.c, $(BUILD_DIR)/check-%, $(CHECK_SRC))
+TEST_OBJ        = $(patsubst $(BUILD_DIR)/%.o, $(TEST_BUILD_DIR)/%.o, $(OBJ))
+TEST_OBJ_NOMAIN = $(filter-out $(TEST_BUILD_DIR)/main.o, $(TEST_OBJ))
+TOOL_BIN        = tools/fieldcmp
+
 ifeq ($(VTK_OUTPUT_FMT),mpi)
 DEFINES  += -D_VTK_WRITER_MPI
 endif
+# Lets a check driver tell which solver variant it was linked against, so a
+# driver that exercises one solver's internals can skip under the others.
+DEFINES  += -DSOLVER_$(SOLVER)
 SRC       =  $(wildcard $(SRC_DIR)/*.h $(SRC_DIR)/*.c)
 CPPFLAGS := $(CPPFLAGS) $(DEFINES) $(OPTIONS) $(INCLUDES)
 c := ,
@@ -59,7 +75,26 @@ $(BUILD_DIR)/%.s:  %.c
 	$(info ===>  GENERATE ASM  $@)
 	$(CC) -S $(CPPFLAGS) $(CFLAGS) $< -o $@
 
-.PHONY: clean distclean info asm format plot
+$(TEST_BUILD_DIR)/%.o:  %.c $(MAKE_DIR)/include_$(TOOLCHAIN).mk config.mk
+	$(info ===>  COMPILE (test)  $@)
+	$(Q)$(CC) -c $(CPPFLAGS) -DTEST $(CFLAGS) $< -o $@
+	$(Q)$(CC) $(CPPFLAGS) -DTEST -MT $@ -MM $< > $(TEST_BUILD_DIR)/$*.d
+
+$(TEST_TARGET): sanity-checks $(TEST_BUILD_DIR) $(TEST_OBJ)
+	$(info ===>  LINKING  $(TEST_TARGET))
+	$(Q)${LD} ${LFLAGS} -o $(TEST_TARGET) $(TEST_OBJ) $(LIBS)
+
+$(BUILD_DIR)/check-%: $(CHECK_DIR)/%.c $(TEST_OBJ_NOMAIN)
+	$(info ===>  LINKING  $@)
+	$(Q)$(CC) $(CPPFLAGS) -I$(CHECK_DIR) -DTEST $(CFLAGS) -o $@ $< $(TEST_OBJ_NOMAIN) ${LFLAGS} $(LIBS)
+
+tools/fieldcmp: tools/fieldcmp.c
+	$(info ===>  LINKING  $@)
+	$(Q)$(CC) $(CFLAGS) -o $@ $< -lm
+
+tests: $(TEST_TARGET) $(CHECK_BIN) $(TOOL_BIN)
+
+.PHONY: clean distclean info asm format plot tests
 
 plot:
 	$(info ===>  GENERATE PLOT)
@@ -73,7 +108,7 @@ distclean: clean
 	$(info ===>  DIST CLEAN)
 	@rm -rf build
 	@rm -rf .cache
-	@rm -f $(TARGET)
+	@rm -f $(TARGET) $(TEST_TARGET) $(TOOL_BIN)
 	@rm -f tags .clangd compile_commands.json
 	@rm -f profile-*.txt
 	@rm -f *.dat
@@ -104,7 +139,11 @@ endif
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
 
+$(TEST_BUILD_DIR):
+	@mkdir -p $(TEST_BUILD_DIR)
+
 .clangd:
 	$(file > .clangd,$(CLANGD_TEMPLATE))
 
 -include $(OBJ:.o=.d)
+-include $(TEST_OBJ:.o=.d)

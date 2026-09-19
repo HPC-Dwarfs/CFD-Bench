@@ -59,3 +59,20 @@ dkms.conf
 .clangd
 /compile_commands.json
 /config.mk
+
+# Build output
+/build/
+
+# Built tools
+/tools/fieldcmp
+
+# Run output
+*.vtk
+/residual.dat
+profile-*.txt
+
+# Recorded test baselines: a local artifact, regenerate with tests/record-baseline.sh
+tests/baseline/*.dump
+
+# Generated test geometry: regenerate with tests/make-geom.sh
+tests/geom/*.vox
