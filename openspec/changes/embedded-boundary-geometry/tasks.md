@@ -94,27 +94,50 @@ to thousands of iterations.
 
 ## 6. Discretization against apertures
 
-- [ ] 6.1 Rewrite the momentum predictor to derive no-slip from face apertures, and verify an obstacle-free run stays bit-identical to the task 3.2 baseline
-- [ ] 6.2 Rewrite the velocity correction so it applies no pressure gradient across a closed face and does not update velocities on closed faces or inside solid regions, and verify that perturbing the pressure inside a solid region before the correction leaves the fluid velocity unchanged
-- [ ] 6.3 Weight the right-hand side by the cell volume fraction, and verify an obstacle-free run is unchanged
-- [ ] 6.4 Assemble the pressure operator as the aperture-weighted six-face flux balance with a per-cell diagonal, and verify symmetry to machine precision for random vectors, both with and without an obstacle
-- [ ] 6.5 Give cells with zero volume fraction identity rows with zero right-hand side, initialize their pressure to zero, and verify their pressure remains exactly zero after a converged solve
-- [ ] 6.6 Compute residual norms over fluid unknowns only, normalized by the fluid cell count, and verify the reported norm is unchanged when the solid fraction grows while the fluid region and its solution stay the same
-- [ ] 6.7 Verify a geometry with an isolated solid cell, and one with a zero-thickness plate, both run to completion and produce a solution with no flow across the plate
+- [x] 6.1 Rewrite the momentum predictor to derive no-slip from face apertures, and verify an obstacle-free run stays bit-identical to the task 3.2 baseline
+- [x] 6.2 Rewrite the velocity correction so it applies no pressure gradient across a closed face and does not update velocities on closed faces or inside solid regions, and verify that perturbing the pressure inside a solid region before the correction leaves the fluid velocity unchanged
+- [x] 6.3 Weight the right-hand side by the cell volume fraction, and verify an obstacle-free run is unchanged
+- [x] 6.4 Assemble the pressure operator as the aperture-weighted six-face flux balance with a per-cell diagonal, and verify symmetry to machine precision for random vectors, both with and without an obstacle
+- [x] 6.5 Give cells with zero volume fraction identity rows with zero right-hand side, initialize their pressure to zero, and verify their pressure remains exactly zero after a converged solve
+- [x] 6.6 Compute residual norms over fluid unknowns only, normalized by the fluid cell count, and verify the reported norm is unchanged when the solid fraction grows while the fluid region and its solution stay the same
+- [x] 6.7 Verify a geometry with an isolated solid cell, and one with a zero-thickness plate, both run to completion and produce a solution with no flow across the plate
 
 ## 7. Kernel split and solvers
 
-- [ ] 7.1 Build the surface cell list at initialization — fluid cells with at least one closed face, plus solid cells with at least one fluid face neighbour — in two global-checkerboard colour segments, each sorted row-major, with precomputed face coefficients and inverse diagonal, and verify its length scales with obstacle surface area rather than solid volume across two obstacle sizes
-- [ ] 7.2 Store both the natural linear index and the compressed `(ic, j, k)` triple per list entry, and verify a check driver reads the same cell through either form
-- [ ] 7.3 Split the red-black sweep into a geometry-free bulk sweep over all cells plus a correction pass over the surface list, with a halo exchange between the two colour segments, and verify the converged result matches the pre-split implementation to the solve tolerance
-- [ ] 7.4 Verify that solid cells not on the surface list stay at exactly zero through a full solve, asserting it in a check driver
-- [ ] 7.5 Order the cut-cell pass after the colour sweeps, and verify red-black SOR converges on an obstacle setup with iteration count within the agreed factor of the obstacle-free case
-- [ ] 7.6 Apply the cut-cell pass in the compressed solver's `PRED`/`PBLACK` layout, and verify its converged field on an obstacle setup matches the red-black solver's to the solve tolerance
-- [ ] 7.7 Apply the same bulk-plus-correction structure inside the multigrid smoother, and verify a multigrid solve matches the red-black solve on the same obstacle setup to the solve tolerance
-- [ ] 7.8 Coarsen apertures and volume fractions through the multigrid hierarchy — four-face mean for apertures, eight-cell mean for volume fractions — and verify the obstacle is represented at every level for a resolved body
-- [ ] 7.9 Report the level at which an obstacle feature becomes unresolved, and verify the solver still converges for an obstacle that vanishes on the coarsest level
-- [ ] 7.10 Verify asymptotic multigrid residual reduction per cycle on an obstacle setup is within the agreed factor of the obstacle-free case
-- [ ] 7.11 Verify all three solvers produce the same converged pressure field and equal iteration counts on 1 and 8 ranks for the same obstacle setup
+- [x] 7.1 Build the surface cell list at initialization — fluid cells with at least one closed face, plus solid cells with at least one fluid face neighbour — in two global-checkerboard colour segments, each sorted row-major, with precomputed face coefficients and inverse diagonal, and verify its length scales with obstacle surface area rather than solid volume across two obstacle sizes
+- [x] 7.2 Store both the natural linear index and the compressed `(ic, j, k)` triple per list entry, and verify a check driver reads the same cell through either form
+- [x] 7.3 Split the red-black sweep into a geometry-free bulk sweep over all cells plus a correction pass over the surface list, with a halo exchange between the two colour segments, and verify the converged result matches the pre-split implementation to the solve tolerance
+- [x] 7.4 Verify that solid cells not on the surface list stay at exactly zero through a full solve, asserting it in a check driver
+- [x] 7.5 Order the cut-cell pass after the colour sweeps, and verify red-black SOR converges on an obstacle setup with iteration count within the agreed factor of the obstacle-free case
+- [x] 7.6 Apply the cut-cell pass in the compressed solver's `PRED`/`PBLACK` layout, and verify its converged field on an obstacle setup matches the red-black solver's to the solve tolerance
+- [x] 7.7 Apply the same bulk-plus-correction structure inside the multigrid smoother, and verify a multigrid solve matches the red-black solve on the same obstacle setup to the solve tolerance
+- [x] 7.8 Coarsen apertures and volume fractions through the multigrid hierarchy — four-face mean for apertures, eight-cell mean for volume fractions — and verify the obstacle is represented at every level for a resolved body
+- [x] 7.9 Report the level at which an obstacle feature becomes unresolved, and verify the solver still converges for an obstacle that vanishes on the coarsest level
+- [x] 7.10 Verify asymptotic multigrid residual reduction per cycle on an obstacle setup is within the agreed factor of the obstacle-free case
+- [x] 7.11 Verify all three solvers produce the same converged pressure field and equal iteration counts on 1 and 8 ranks for the same obstacle setup
+
+Three notes from implementing sections 6 and 7.
+
+Guarding the velocity correction with a branch on the aperture, rather than
+multiplying by it, changes what the compiler contracts under `-ffast-math` and
+moved the last bit of every obstacle-free result. The correction multiplies by
+the aperture instead: an aperture is 0 or 1, so the open case is bit-for-bit the
+update the solver always did, and the closed case gives the zero the velocity on
+a closed face is required to have.
+
+The multigrid residual is now the aperture-weighted operator rather than the
+plain seven-point stencil, which regroups the arithmetic. That moves
+obstacle-free multigrid results by 2e-16 to 5e-15 -- rounding, not behaviour,
+but it does mean the recorded multigrid baselines were re-recorded at this
+point. The relaxation solvers are unaffected, because their sweep is unchanged
+and the aperture-weighted residual only ever reports.
+
+The bulk sweep writes a wrong value into every listed cell before the
+correction runs, so the correction cannot simply adjust what it finds: it needs
+the value the cell held beforehand. Each colour therefore saves its listed cells
+before the sweep and recomputes from that. The saved array is O(surface), so
+this costs nothing that scales, and it is what keeps the interior sweep free of
+any branch or geometry read.
 
 ## 8. Setups, assets and documentation
 

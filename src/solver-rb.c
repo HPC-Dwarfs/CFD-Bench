@@ -13,20 +13,39 @@
 #include "pressure-bc.h"
 #include "profiler.h"
 #include "solver.h"
+#include "surface-list.h"
 #include "timing.h"
 #include "util.h"
 
-void initSolver(Solver *s, Discretization *d, Parameter *p) { solverBaseInit(s, d, p); }
+void initSolver(Solver *s, Discretization *d, Parameter *p)
+{
+  solverBaseInit(s, d, p);
+
+  double dx2 = s->grid->dx * s->grid->dx;
+  double dy2 = s->grid->dy * s->grid->dy;
+  double dz2 = s->grid->dz * s->grid->dz;
+
+  surfaceListBuild(&s->surface,
+      s->comm->imaxLocal,
+      s->comm->jmaxLocal,
+      s->comm->kmaxLocal,
+      s->iOffset,
+      s->jOffset,
+      s->kOffset,
+      s->Ax,
+      s->Ay,
+      s->Az,
+      s->Lambda,
+      1.0 / dx2,
+      1.0 / dy2,
+      1.0 / dz2);
+}
 
 double solve(Solver *s, double *p, const double *rhs)
 {
   int imaxLocal = s->comm->imaxLocal;
   int jmaxLocal = s->comm->jmaxLocal;
   int kmaxLocal = s->comm->kmaxLocal;
-
-  int imax      = s->grid->imax;
-  int jmax      = s->grid->jmax;
-  int kmax      = s->grid->kmax;
 
   int iOffset   = s->iOffset;
   int jOffset   = s->jOffset;
@@ -43,15 +62,17 @@ double solve(Solver *s, double *p, const double *rhs)
 
   double factor =
       s->omega * 0.5 * (dx2 * dy2 * dz2) / (dy2 * dz2 + dx2 * dz2 + dx2 * dy2);
-  double epssq      = eps * eps;
-  double cells      = (double)imax * jmax * kmax;
-  int it            = 0;
+  double epssq = eps * eps;
+  int it       = 0;
+
+  PressureLevelType lv;
+  pressureLevelFromSolver(s, &lv);
 
   /* Accumulated inside the sweep, so it describes the field part-way through
    * the iteration. That is what decides when to stop; the number reported at
    * the end comes from a dedicated pass. Reset every iteration -- it used to be
    * seeded at 1.0 and never cleared, so it only ever grew. */
-  double sweepRes   = DBL_MAX;
+  double sweepRes = DBL_MAX;
 
   TIMESTART
   while ((sweepRes >= epssq) && (it < itermax)) {
@@ -59,6 +80,12 @@ double solve(Solver *s, double *p, const double *rhs)
 
     for (int color = 0; color < 2; color++) {
       PROFILE(COMM, commExchange(s->comm, p));
+
+      /* The interior sweep reads no geometry at all, so its cost and its
+       * instruction mix are the same with an obstacle and without one. What it
+       * gets wrong is confined to the surface list, which is O(obstacle
+       * surface) rather than O(domain). */
+      pressureSaveSurface(&lv, p, color);
 
       for (int k = 1; k < kmaxLocal + 1; k++) {
         for (int j = 1; j < jmaxLocal + 1; j++) {
@@ -77,11 +104,12 @@ double solve(Solver *s, double *p, const double *rhs)
         }
       }
 
+      pressureCorrectSurface(&lv, p, rhs, color, s->omega, &sweepRes);
       pressureBcApply(&s->bc, s->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
     }
 
     commReduceAll(&sweepRes, SUM);
-    sweepRes = sweepRes / cells;
+    sweepRes = sweepRes / s->fluidCells;
 #ifdef DEBUG
     if (commIsMaster(s->comm)) {
       printf("%d Residuum: %e\n", it, sweepRes);
@@ -93,17 +121,7 @@ double solve(Solver *s, double *p, const double *rhs)
   }
   TIMESTOP(SOLVER);
 
-  double res = pressureResidualNorm(s->comm,
-      &s->bc,
-      p,
-      rhs,
-      imaxLocal,
-      jmaxLocal,
-      kmaxLocal,
-      s->grid->dx,
-      s->grid->dy,
-      s->grid->dz,
-      cells);
+  double res = pressureResidualNorm(&lv, p, rhs);
 
 #ifdef VERBOSE
   if (commIsMaster(s->comm)) {

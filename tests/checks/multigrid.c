@@ -78,6 +78,15 @@ static void setup(CommType *base, int boundary)
   initProfiler(&D.comm);
 }
 
+static void setupWithGeometry(CommType *base, const char *geometry)
+{
+  Params.geometryFile = (char *)geometry;
+  D.comm              = *base;
+  commPartition(&D.comm, KMAX, JMAX, IMAX);
+  initDiscretization(&D, &Params);
+  initSolver(&S, &D, &Params);
+}
+
 static void fill(double *f, int im, int jm, int km, double value)
 {
   size_t size = (size_t)(im + 2) * (jm + 2) * (km + 2);
@@ -271,6 +280,9 @@ int main(int argc, char **argv)
     double *rhs  = calloc(size, sizeof(double));
     double *p0   = calloc(size, sizeof(double));
 
+    PressureLevelType desc;
+    pressureLevelFromSolver(&S, &desc);
+
     int offsets[NDIMS] = { 0, 0, 0 };
     commGetOffsets(&D.comm, offsets, KMAX, JMAX, IMAX);
 
@@ -288,24 +300,21 @@ int main(int argc, char **argv)
       }
     }
 
-    double before = pressureResidualNorm(
-        &D.comm, &S.bc, p0, rhs, fi, fj, fk, dx, dy, dz, cells);
+    double before = pressureResidualNorm(&desc, p0, rhs);
 
     /* Smoothing only, with as many sweeps as a whole cycle spends. */
     for (size_t i = 0; i < size; i++) {
       D.p[i] = 0.0;
     }
     mgTestSmooth(&S, 0, D.p, rhs, Params.presmooth + Params.postsmooth);
-    double smoothed = pressureResidualNorm(
-        &D.comm, &S.bc, D.p, rhs, fi, fj, fk, dx, dy, dz, cells);
+    double smoothed = pressureResidualNorm(&desc, D.p, rhs);
 
     /* A full cycle, same starting point. */
     for (size_t i = 0; i < size; i++) {
       D.p[i] = 0.0;
     }
     mgTestVcycle(&S, D.p, rhs);
-    double cycled = pressureResidualNorm(
-        &D.comm, &S.bc, D.p, rhs, fi, fj, fk, dx, dy, dz, cells);
+    double cycled = pressureResidualNorm(&desc, D.p, rhs);
 
     CHECK_TRUE(cycled < before, "a V-cycle did not reduce the residual (%.3e -> %.3e)",
         before, cycled);
@@ -324,6 +333,100 @@ int main(int argc, char **argv)
 
     free(rhs);
     free(p0);
+  }
+
+  /*
+   * A body resolved on the finest grid has to survive coarsening, otherwise the
+   * coarse correction solves a different problem from the one it is correcting.
+   * The apertures and volume fractions are coarsened geometrically -- four fine
+   * faces to a coarse face, eight fine cells to a coarse cell -- so a body
+   * several cells across stays represented for several levels.
+   */
+  {
+    setupWithGeometry(&comm, "sphere:1.0,0.5,0.5,0.4");
+
+    int levelsG = mgTestLevels(&S);
+
+    for (int l = 0; l < levelsG; l++) {
+      double solid   = (double)mgTestLevelSolidCount(&S, l);
+      double surface = (double)mgTestLevelSurfaceCount(&S, l);
+      commReduceAll(&solid, SUM);
+      commReduceAll(&surface, SUM);
+
+      CHECK_TRUE(solid > 0.0,
+          "level %d of %d has no solid cells, so the body is not represented there",
+          l,
+          levelsG);
+      CHECK_TRUE(surface > 0.0,
+          "level %d of %d has an empty surface list despite holding the body",
+          l,
+          levelsG);
+
+      if (commIsMaster(&D.comm)) {
+        printf("level %d: %.0f solid cells, %.0f surface cells\n", l, solid, surface);
+      }
+    }
+  }
+
+  /*
+   * A body too small to survive coarsening is not an error: the cycle still has
+   * to converge, with the coarse levels simply blind to it. initSolver says so
+   * on the run header rather than leaving it to be discovered as a convergence
+   * problem.
+   */
+  {
+    setupWithGeometry(&comm, "sphere:1.0,0.5,0.5,0.12");
+
+    int levelsG = mgTestLevels(&S);
+    double coarsest = (double)mgTestLevelSolidCount(&S, levelsG - 1);
+    commReduceAll(&coarsest, SUM);
+
+    CHECK_TRUE(coarsest == 0.0,
+        "the small sphere was still resolved at the coarsest level, so the "
+        "unresolved case is untested (%.0f solid cells)",
+        coarsest);
+
+    int fi, fj, fk;
+    mgTestLevelExtents(&S, 0, &fi, &fj, &fk);
+    size_t sz = (size_t)(fi + 2) * (fj + 2) * (fk + 2);
+
+    PressureLevelType desc;
+    pressureLevelFromSolver(&S, &desc);
+
+    int offsets[NDIMS] = { 0, 0, 0 };
+    commGetOffsets(&D.comm, offsets, KMAX, JMAX, IMAX);
+
+    for (int k = 1; k < fk + 1; k++) {
+      for (int j = 1; j < fj + 1; j++) {
+        for (int i = 1; i < fi + 1; i++) {
+          double x = ((i - 1 + offsets[IDIM]) + 0.5) / (double)IMAX;
+          double y = ((j - 1 + offsets[JDIM]) + 0.5) / (double)JMAX;
+          double z = ((k - 1 + offsets[KDIM]) + 0.5) / (double)KMAX;
+          AT(D.rhs, i, j, k, fi, fj) =
+              cos(M_PI * x) * cos(M_PI * y) * cos(M_PI * z);
+        }
+      }
+    }
+
+    for (size_t i = 0; i < sz; i++) {
+      D.p[i] = 0.0;
+    }
+
+    double before = pressureResidualNorm(&desc, D.p, D.rhs);
+    for (int c = 0; c < 20; c++) {
+      mgTestVcycle(&S, D.p, D.rhs);
+    }
+    double after = pressureResidualNorm(&desc, D.p, D.rhs);
+
+    CHECK_TRUE(after < before,
+        "multigrid did not converge with a body that vanishes on the coarse levels "
+        "(%.3e to %.3e)",
+        before,
+        after);
+
+    if (commIsMaster(&D.comm)) {
+      printf("unresolved body: residual %.3e to %.3e over 20 cycles\n", before, after);
+    }
   }
 
   int failures = CheckFailures;

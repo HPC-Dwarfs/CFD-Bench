@@ -179,17 +179,9 @@ static int runCase(CommType *base, int boundary, const char *label)
 
   /* An independently computed residual of the returned field must agree with
    * what the solver reported. */
-  double independent = pressureResidualNorm(&d.comm,
-      &s.bc,
-      d.p,
-      d.rhs,
-      imaxLocal,
-      jmaxLocal,
-      kmaxLocal,
-      dx,
-      dy,
-      dz,
-      cells);
+  PressureLevelType lv;
+  pressureLevelFromSolver(&s, &lv);
+  double independent = pressureResidualNorm(&lv, d.p, d.rhs);
 
   CHECK_TRUE(fabs(independent - res) <= 1e-12 * fabs(res) + 1e-30,
       "%s: reported residual %.17g is not the residual of the returned field %.17g",

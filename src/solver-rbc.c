@@ -14,6 +14,7 @@
 #include "pressure-bc.h"
 #include "profiler.h"
 #include "solver.h"
+#include "surface-list.h"
 #include "timing.h"
 #include "util.h"
 
@@ -26,7 +27,136 @@
 #define RHSRED(ic, j, k) rhsRed[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
 #define RHSBLACK(ic, j, k) rhsBlack[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)]
 
-void initSolver(Solver *s, Discretization *d, Parameter *p) { solverBaseInit(s, d, p); }
+void initSolver(Solver *s, Discretization *d, Parameter *p)
+{
+  solverBaseInit(s, d, p);
+
+  double dx2 = s->grid->dx * s->grid->dx;
+  double dy2 = s->grid->dy * s->grid->dy;
+  double dz2 = s->grid->dz * s->grid->dz;
+
+  surfaceListBuild(&s->surface,
+      s->comm->imaxLocal,
+      s->comm->jmaxLocal,
+      s->comm->kmaxLocal,
+      s->iOffset,
+      s->jOffset,
+      s->kOffset,
+      s->Ax,
+      s->Ay,
+      s->Az,
+      s->Lambda,
+      1.0 / dx2,
+      1.0 / dy2,
+      1.0 / dz2);
+}
+
+
+/*
+ * The cut-cell correction in the compressed colour-split layout.
+ *
+ * Same operator as pressureCorrectSurface, addressed differently: a cell of one
+ * colour lives in its own array and all six of its face neighbours live in the
+ * other. The x neighbours share or straddle the compressed column depending on
+ * the parity of the original index, which is the same bookkeeping the bulk
+ * passes do with ioff.
+ *
+ * This is why every list entry carries its compressed index as well as its
+ * linear one: one list serves the natural layout and this one.
+ */
+static void correctSurfaceCompressed(const SurfaceListType *list,
+    int color,
+    double *pRed,
+    double *pBlack,
+    const double *rhsRed,
+    const double *rhsBlack,
+    int imaxLocal,
+    int jmaxLocal,
+    double omega,
+    double idx2,
+    double idy2,
+    double idz2,
+    double *sweepRes)
+{
+  if (list->count == 0) {
+    return;
+  }
+
+  /* Colour 0 is the even parity of (i + j + k), which is what this layout calls
+   * red. */
+  double *own          = (color == 0) ? pRed : pBlack;
+  double *other        = (color == 0) ? pBlack : pRed;
+  const double *rhsOwn = (color == 0) ? rhsRed : rhsBlack;
+
+  int begin            = (color == 0) ? 0 : list->colorCount[0];
+  int end              = begin + list->colorCount[color];
+  int strideJ          = imaxLocal + 2;
+  double delta         = 0.0;
+
+  for (int e = begin; e < end; e++) {
+    int i       = list->index[e] % strideJ;
+    int j       = list->jc[e];
+    int k       = list->kc[e];
+    int ic      = list->ic[e];
+
+    int icE     = (i & 1) ? ic + 1 : ic;
+    int icW     = (i & 1) ? ic : ic - 1;
+
+    double pOld = list->saved[e];
+
+    double pE   = other[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (icE)];
+    double pW   = other[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (icW)];
+    double pN   = other[(k) * Nc * (jmaxLocal + 2) + (j + 1) * Nc + (ic)];
+    double pS   = other[(k) * Nc * (jmaxLocal + 2) + (j - 1) * Nc + (ic)];
+    double pT   = other[(k + 1) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)];
+    double pB   = other[(k - 1) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)];
+
+    double rhsc = rhsOwn[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)];
+
+    double rBulk = rhsc - ((pE - 2.0 * pOld + pW) * idx2 +
+                              (pN - 2.0 * pOld + pS) * idy2 +
+                              (pT - 2.0 * pOld + pB) * idz2);
+    delta -= rBulk * rBulk;
+
+    if (list->solid[e]) {
+      own[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)] = 0.0;
+      continue;
+    }
+
+    double r = list->lambda[e] * rhsc -
+               (list->aE[e] * (pE - pOld) + list->aW[e] * (pW - pOld) +
+                   list->aN[e] * (pN - pOld) + list->aS[e] * (pS - pOld) +
+                   list->aT[e] * (pT - pOld) + list->aB[e] * (pB - pOld));
+
+    own[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)] =
+        pOld - omega * r * list->invDiag[e];
+    delta += r * r;
+  }
+
+  *sweepRes += delta;
+}
+
+/* Keep the listed cells of one colour before the bulk pass overwrites them. */
+static void saveSurfaceCompressed(const SurfaceListType *list,
+    int color,
+    const double *pRed,
+    const double *pBlack,
+    int imaxLocal,
+    int jmaxLocal)
+{
+  if (list->count == 0) {
+    return;
+  }
+
+  const double *own = (color == 0) ? pRed : pBlack;
+  int begin         = (color == 0) ? 0 : list->colorCount[0];
+  int end           = begin + list->colorCount[color];
+
+  for (int e = begin; e < end; e++) {
+    ((SurfaceListType *)list)->saved[e] =
+        own[(list->kc[e]) * Nc * (jmaxLocal + 2) + (list->jc[e]) * Nc + (list->ic[e])];
+  }
+}
 
 double solve(Solver *s, double *p, const double *rhs)
 {
@@ -57,6 +187,9 @@ double solve(Solver *s, double *p, const double *rhs)
   double cells    = (double)imax * jmax * kmax;
   int it          = 0;
 
+  PressureLevelType lv;
+  pressureLevelFromSolver(s, &lv);
+
   /* See solverbase.c: accumulated in-sweep for loop control only, reset every
    * iteration, with the reported value computed once at the end. */
   double sweepRes = DBL_MAX;
@@ -69,6 +202,8 @@ double solve(Solver *s, double *p, const double *rhs)
 
     for (int color = 0; color < 2; color++) {
       PROFILE(COMM, commExchange(s->comm, p));
+
+      pressureSaveSurface(&lv, p, color);
 
       for (int k = 1; k < kmaxLocal + 1; k++) {
         for (int j = 1; j < jmaxLocal + 1; j++) {
@@ -87,11 +222,12 @@ double solve(Solver *s, double *p, const double *rhs)
         }
       }
 
+      pressureCorrectSurface(&lv, p, rhs, color, s->omega, &sweepRes);
       pressureBcApply(&s->bc, s->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
     }
 
     commReduceAll(&sweepRes, SUM);
-    sweepRes = sweepRes / cells;
+    sweepRes = sweepRes / s->fluidCells;
 #ifdef DEBUG
     if (commIsMaster(s->comm)) {
       printf("%d Residuum: %e\n", it, sweepRes);
@@ -142,6 +278,8 @@ double solve(Solver *s, double *p, const double *rhs)
     sweepRes = 0.0;
 
     /* Pass 0: update red cells (neighbors live in pBlack) */
+    saveSurfaceCompressed(&s->surface, 0, pRed, pBlack, imaxLocal, jmaxLocal);
+
     for (int k = 1; k <= kmaxLocal; k++) {
       for (int j = 1; j <= jmaxLocal; j++) {
         int pjk   = (j + k) % 2;
@@ -166,7 +304,12 @@ double solve(Solver *s, double *p, const double *rhs)
       }
     }
 
+    correctSurfaceCompressed(&s->surface, 0, pRed, pBlack, rhsRed, rhsBlack, imaxLocal,
+        jmaxLocal, s->omega, idx2, idy2, idz2, &sweepRes);
+
     /* Pass 1: update black cells (neighbors live in pRed) */
+    saveSurfaceCompressed(&s->surface, 1, pRed, pBlack, imaxLocal, jmaxLocal);
+
     for (int k = 1; k <= kmaxLocal; k++) {
       for (int j = 1; j <= jmaxLocal; j++) {
         int pjk   = (j + k) % 2;
@@ -190,6 +333,9 @@ double solve(Solver *s, double *p, const double *rhs)
         }
       }
     }
+
+    correctSurfaceCompressed(&s->surface, 1, pRed, pBlack, rhsRed, rhsBlack, imaxLocal,
+        jmaxLocal, s->omega, idx2, idy2, idz2, &sweepRes);
 
     /* The pressure boundary condition in the compressed layout. The sign is
      * what makes it the setup's condition rather than a wall everywhere: +1
@@ -243,7 +389,7 @@ double solve(Solver *s, double *p, const double *rhs)
       }
     }
 
-    sweepRes = sweepRes / cells;
+    sweepRes = sweepRes / s->fluidCells;
 #ifdef DEBUG
     if (commIsMaster(s->comm)) {
       printf("%d Residuum: %e\n", it, sweepRes);
@@ -276,17 +422,7 @@ double solve(Solver *s, double *p, const double *rhs)
 
   /* Computed from the field that is about to be returned -- in the compressed
    * path that means after the scatter above, not from the split arrays. */
-  double res = pressureResidualNorm(s->comm,
-      &s->bc,
-      p,
-      rhs,
-      imaxLocal,
-      jmaxLocal,
-      kmaxLocal,
-      s->grid->dx,
-      s->grid->dy,
-      s->grid->dz,
-      cells);
+  double res = pressureResidualNorm(&lv, p, rhs);
 
 #ifdef VERBOSE
   if (commIsMaster(s->comm)) {

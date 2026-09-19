@@ -6,57 +6,169 @@
  * Not named solver-base.c on purpose: the Makefile treats solver-*.c as the
  * mutually exclusive solver variants and links exactly one of them.
  */
+#include <stddef.h>
+
 #include "solver.h"
 #include "util.h"
 
 /*
- * The residual norm of a field, as a dedicated pass.
+ * The pressure operator, in one place.
  *
- * The relaxation sweeps accumulate a residual as they go, which costs nothing
- * extra but describes the field as it was part-way through the sweep, not the
- * field that comes back. That is good enough to decide when to stop iterating
- * and wrong to report. So the sweeps keep their cheap accumulation for loop
- * control, and this runs once per solve to produce the number that is reported
- * and returned -- one extra pass per solve rather than per iteration, which
- * keeps it off the benchmark's headline kernel.
+ *   sum over the six faces of  A_f (p_nb - p_c) / h^2  =  Lambda_c * rhs_c
  *
- * Returns the mean square residual, to be compared against eps * eps, which is
- * the convention the solvers already used.
+ * Each face contributes an equal and opposite coefficient to the two cells it
+ * separates, so the operator is symmetric for any face weights -- which is why
+ * fractional apertures will need no change here -- and its diagonal is
+ * -sum_f A_f / h^2, per cell rather than domain-wide.
+ *
+ * A cell with zero volume fraction is an identity row with a zero right-hand
+ * side. It stays in the vector so the arrays stay rectangular and the interior
+ * sweep needs no index compression; its solution is zero.
  */
-double pressureResidualNorm(CommType *comm,
-    const PressureBcType *bc,
-    double *p,
-    const double *rhs,
-    int imaxLocal,
-    int jmaxLocal,
-    int kmaxLocal,
-    double dx,
-    double dy,
-    double dz,
-    double globalCells)
-{
-  double idx2 = 1.0 / (dx * dx);
-  double idy2 = 1.0 / (dy * dy);
-  double idz2 = 1.0 / (dz * dz);
-  double res  = 0.0;
 
-  commExchange(comm, p);
-  pressureBcApply(bc, comm, p, imaxLocal, jmaxLocal, kmaxLocal);
+double pressureResidualNorm(
+    const PressureLevelType *lv, double *p, const double *rhs)
+{
+  int imaxLocal        = lv->imaxLocal;
+  int jmaxLocal        = lv->jmaxLocal;
+  int kmaxLocal        = lv->kmaxLocal;
+
+  const double *Ax     = lv->Ax;
+  const double *Ay     = lv->Ay;
+  const double *Az     = lv->Az;
+  const double *Lambda = lv->Lambda;
+
+  double idx2          = 1.0 / (lv->dx * lv->dx);
+  double idy2          = 1.0 / (lv->dy * lv->dy);
+  double idz2          = 1.0 / (lv->dz * lv->dz);
+  double res           = 0.0;
+
+  commExchange(lv->comm, p);
+  pressureBcApply(lv->bc, lv->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        double r = RHS(i, j, k) -
-                   ((P(i + 1, j, k) - 2.0 * P(i, j, k) + P(i - 1, j, k)) * idx2 +
-                       (P(i, j + 1, k) - 2.0 * P(i, j, k) + P(i, j - 1, k)) * idy2 +
-                       (P(i, j, k + 1) - 2.0 * P(i, j, k) + P(i, j, k - 1)) * idz2);
+        /* Solid cells contribute nothing: the residual describes the fluid
+         * problem, so growing the solid fraction must not change it. */
+        if (LAM(i, j, k) == 0.0) {
+          continue;
+        }
+
+        double pc = P(i, j, k);
+        double r =
+            LAM(i, j, k) * RHS(i, j, k) -
+            (AX(i, j, k) * (P(i + 1, j, k) - pc) * idx2 +
+                AX(i - 1, j, k) * (P(i - 1, j, k) - pc) * idx2 +
+                AY(i, j, k) * (P(i, j + 1, k) - pc) * idy2 +
+                AY(i, j - 1, k) * (P(i, j - 1, k) - pc) * idy2 +
+                AZ(i, j, k) * (P(i, j, k + 1) - pc) * idz2 +
+                AZ(i, j, k - 1) * (P(i, j, k - 1) - pc) * idz2);
+
         res += r * r;
       }
     }
   }
 
   commReduceAll(&res, SUM);
-  return res / globalCells;
+  return res / lv->fluidCells;
+}
+
+/*
+ * Remember what the listed cells of one colour hold, before the bulk sweep
+ * overwrites them.
+ *
+ * The interior sweep is deliberately blind to geometry, so it computes the
+ * wrong value for every cell on the list. Keeping the old value is what lets
+ * the correction pass compute the right one from the right starting point,
+ * instead of trying to undo an update it did not make.
+ */
+void pressureSaveSurface(const PressureLevelType *lv, const double *p, int color)
+{
+  SurfaceListType *list = lv->list;
+
+  if (list == NULL || list->count == 0) {
+    return;
+  }
+
+  int begin = (color == 0) ? 0 : list->colorCount[0];
+  int end   = begin + list->colorCount[color];
+
+  for (int e = begin; e < end; e++) {
+    list->saved[e] = p[list->index[e]];
+  }
+}
+
+/*
+ * Relax the listed cells of one colour with the coefficients their geometry
+ * actually implies, replacing whatever the bulk sweep left there.
+ *
+ * sweepRes is the residual the bulk sweep accumulated. For a listed cell that
+ * contribution is wrong, so the bulk residual is recomputed here and swapped
+ * for the correct one, leaving the total describing the fluid problem.
+ */
+void pressureCorrectSurface(const PressureLevelType *lv,
+    double *p,
+    const double *rhs,
+    int color,
+    double omega,
+    double *sweepRes)
+{
+  SurfaceListType *list = lv->list;
+
+  if (list == NULL || list->count == 0) {
+    return;
+  }
+
+  int imaxLocal = lv->imaxLocal;
+  int jmaxLocal = lv->jmaxLocal;
+
+  double idx2   = 1.0 / (lv->dx * lv->dx);
+  double idy2   = 1.0 / (lv->dy * lv->dy);
+  double idz2   = 1.0 / (lv->dz * lv->dz);
+
+  int strideJ       = imaxLocal + 2;
+  int strideK       = (imaxLocal + 2) * (jmaxLocal + 2);
+
+  int begin         = (color == 0) ? 0 : list->colorCount[0];
+  int end           = begin + list->colorCount[color];
+
+  double delta      = 0.0;
+
+  for (int e = begin; e < end; e++) {
+    int idx     = list->index[e];
+    double pOld = list->saved[e];
+
+    double pE   = p[idx + 1];
+    double pW   = p[idx - 1];
+    double pN   = p[idx + strideJ];
+    double pS   = p[idx - strideJ];
+    double pT   = p[idx + strideK];
+    double pB   = p[idx - strideK];
+
+    /* Undo this cell's contribution to the bulk sweep's residual. */
+    double rBulk = rhs[idx] - ((pE - 2.0 * pOld + pW) * idx2 +
+                                  (pN - 2.0 * pOld + pS) * idy2 +
+                                  (pT - 2.0 * pOld + pB) * idz2);
+    delta -= rBulk * rBulk;
+
+    if (list->solid[e]) {
+      /* An identity row with a zero right-hand side. Its residual is zero and
+       * it contributes nothing to the fluid problem. */
+      p[idx] = 0.0;
+      continue;
+    }
+
+    double r = list->lambda[e] * rhs[idx] -
+               (list->aE[e] * (pE - pOld) + list->aW[e] * (pW - pOld) +
+                   list->aN[e] * (pN - pOld) + list->aS[e] * (pS - pOld) +
+                   list->aT[e] * (pT - pOld) + list->aB[e] * (pB - pOld));
+
+    p[idx] = pOld - omega * r * list->invDiag[e];
+    delta += r * r;
+  }
+
+  *sweepRes += delta;
 }
 
 void solverBaseInit(Solver *s, Discretization *d, Parameter *p)
@@ -93,4 +205,44 @@ void solverBaseInit(Solver *s, Discretization *d, Parameter *p)
   s->iOffset = offsets[IDIM];
   s->jOffset = offsets[JDIM];
   s->kOffset = offsets[KDIM];
+
+  /* Residuals are normalized by the fluid cell count, not the cell count, so
+   * that the reported norm does not shrink just because more of the domain is
+   * solid. */
+  int imaxLocal        = s->comm->imaxLocal;
+  int jmaxLocal        = s->comm->jmaxLocal;
+  int kmaxLocal        = s->comm->kmaxLocal;
+  const double *Lambda = s->Lambda;
+  double fluid         = 0.0;
+
+  for (int k = 1; k < kmaxLocal + 1; k++) {
+    for (int j = 1; j < jmaxLocal + 1; j++) {
+      for (int i = 1; i < imaxLocal + 1; i++) {
+        if (LAM(i, j, k) > 0.0) {
+          fluid += 1.0;
+        }
+      }
+    }
+  }
+
+  commReduceAll(&fluid, SUM);
+  s->fluidCells = (fluid > 0.0) ? fluid : 1.0;
+}
+
+void pressureLevelFromSolver(const Solver *s, PressureLevelType *lv)
+{
+  lv->comm       = s->comm;
+  lv->bc         = &s->bc;
+  lv->Ax         = s->Ax;
+  lv->Ay         = s->Ay;
+  lv->Az         = s->Az;
+  lv->Lambda     = s->Lambda;
+  lv->list       = (SurfaceListType *)&s->surface;
+  lv->imaxLocal  = s->comm->imaxLocal;
+  lv->jmaxLocal  = s->comm->jmaxLocal;
+  lv->kmaxLocal  = s->comm->kmaxLocal;
+  lv->dx         = s->grid->dx;
+  lv->dy         = s->grid->dy;
+  lv->dz         = s->grid->dz;
+  lv->fluidCells = s->fluidCells;
 }

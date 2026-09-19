@@ -12,6 +12,7 @@
 #include "pressure-bc.h"
 #include "profiler.h"
 #include "solver.h"
+#include "surface-list.h"
 #include "timing.h"
 #include "util.h"
 
@@ -32,7 +33,14 @@ typedef struct {
   int imaxLocal, jmaxLocal, kmaxLocal;
   int iOffset, jOffset, kOffset;
   double dx, dy, dz;
-  double cells; /* global interior cells at this level */
+  double cells;      /* global interior cells at this level */
+  double fluidCells; /* global fluid cells at this level */
+  /* The geometry, coarsened from the level above: a coarse face aperture is the
+   * mean of the four fine faces it covers, a coarse volume fraction the mean of
+   * the eight fine cells. Level 0 borrows the solver's arrays. */
+  double *Ax, *Ay, *Az, *Lambda;
+  int ownsGeometry;
+  SurfaceListType surface;
   double *e, *r;
 } MgLevelType;
 
@@ -42,6 +50,24 @@ typedef struct {
   e[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
 #define R(i, j, k)                                                                       \
   r[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
+
+static void levelDescribe(Solver *s, MgLevelType *lv, PressureLevelType *out)
+{
+  out->comm       = &lv->comm;
+  out->bc         = &s->bc;
+  out->Ax         = lv->Ax;
+  out->Ay         = lv->Ay;
+  out->Az         = lv->Az;
+  out->Lambda     = lv->Lambda;
+  out->list       = &lv->surface;
+  out->imaxLocal  = lv->imaxLocal;
+  out->jmaxLocal  = lv->jmaxLocal;
+  out->kmaxLocal  = lv->kmaxLocal;
+  out->dx         = lv->dx;
+  out->dy         = lv->dy;
+  out->dz         = lv->dz;
+  out->fluidCells = lv->fluidCells;
+}
 
 static size_t levelSize(MgLevelType *lv)
 {
@@ -226,9 +252,17 @@ static void smooth(
   double factor =
       s->omega * 0.5 * (dx2 * dy2 * dz2) / (dy2 * dz2 + dx2 * dz2 + dx2 * dy2);
 
+  PressureLevelType desc;
+  levelDescribe(s, lv, &desc);
+  double ignored = 0.0;
+
   for (int sweep = 0; sweep < sweeps; sweep++) {
     for (int color = 0; color < 2; color++) {
       commExchange(&lv->comm, p);
+
+      /* Same split as the relaxation solvers: a geometry-free interior sweep,
+       * then a correction over this level's own surface list. */
+      pressureSaveSurface(&desc, p, color);
 
       for (int k = 1; k < kmaxLocal + 1; k++) {
         for (int j = 1; j < jmaxLocal + 1; j++) {
@@ -246,6 +280,7 @@ static void smooth(
         }
       }
 
+      pressureCorrectSurface(&desc, p, rhs, color, s->omega, &ignored);
       pressureBcApply(&s->bc, &lv->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
     }
   }
@@ -266,13 +301,29 @@ static void residualField(Solver *s, MgLevelType *lv, double *p, const double *r
   commExchange(&lv->comm, p);
   pressureBcApply(&s->bc, &lv->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
 
+  const double *Ax     = lv->Ax;
+  const double *Ay     = lv->Ay;
+  const double *Az     = lv->Az;
+  const double *Lambda = lv->Lambda;
+
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        R(i, j, k) = RHS(i, j, k) -
-                     ((P(i + 1, j, k) - 2.0 * P(i, j, k) + P(i - 1, j, k)) * idx2 +
-                         (P(i, j + 1, k) - 2.0 * P(i, j, k) + P(i, j - 1, k)) * idy2 +
-                         (P(i, j, k + 1) - 2.0 * P(i, j, k) + P(i, j, k - 1)) * idz2);
+        /* A solid cell is an identity row already satisfied by p = 0, so it has
+         * no residual to pass down the hierarchy. */
+        if (LAM(i, j, k) == 0.0) {
+          R(i, j, k) = 0.0;
+          continue;
+        }
+
+        double pc  = P(i, j, k);
+        R(i, j, k) = LAM(i, j, k) * RHS(i, j, k) -
+                     (AX(i, j, k) * (P(i + 1, j, k) - pc) * idx2 +
+                         AX(i - 1, j, k) * (P(i - 1, j, k) - pc) * idx2 +
+                         AY(i, j, k) * (P(i, j + 1, k) - pc) * idy2 +
+                         AY(i, j - 1, k) * (P(i, j - 1, k) - pc) * idy2 +
+                         AZ(i, j, k) * (P(i, j, k + 1) - pc) * idz2 +
+                         AZ(i, j, k - 1) * (P(i, j, k - 1) - pc) * idz2);
       }
     }
   }
@@ -308,6 +359,122 @@ static void vcycle(Solver *s, int level, double *p, const double *rhs)
   smooth(s, lv, p, rhs, s->postsmooth);
 }
 
+
+/*
+ * Coarsen the geometry by one level.
+ *
+ * A coarse face aperture is the mean of the four fine faces it covers; a coarse
+ * volume fraction is the mean of the eight fine cells. Cheap, local, and
+ * consistent with a flux-balance assembly, which is what makes it the right
+ * first choice over a Galerkin coarse operator -- that would be 27-point in
+ * three dimensions and would change the coarse kernels and their layout.
+ *
+ * The means are then rounded, because this phase carries binary apertures. A
+ * feature thinner than a coarse cell rounds away, which is reported rather than
+ * left to be discovered as a convergence problem.
+ */
+static void coarsenGeometry(MgLevelType *fine, MgLevelType *coarse)
+{
+  int fi = fine->imaxLocal + 2;
+  int fj = fine->jmaxLocal + 2;
+  int ci = coarse->imaxLocal + 2;
+  int cj = coarse->jmaxLocal + 2;
+
+#define FINE(f, i, j, k) (f)[(size_t)(k) * fi * fj + (size_t)(j) * fi + (size_t)(i)]
+#define CRS(f, i, j, k) (f)[(size_t)(k) * ci * cj + (size_t)(j) * ci + (size_t)(i)]
+
+  size_t size = (size_t)ci * cj * (coarse->kmaxLocal + 2);
+
+  for (size_t i = 0; i < size; i++) {
+    coarse->Ax[i] = coarse->Ay[i] = coarse->Az[i] = coarse->Lambda[i] = 1.0;
+  }
+
+  for (int k = 1; k < coarse->kmaxLocal + 1; k++) {
+    for (int j = 1; j < coarse->jmaxLocal + 1; j++) {
+      for (int i = 1; i < coarse->imaxLocal + 1; i++) {
+        int fiI = 2 * i - 1, fjI = 2 * j - 1, fkI = 2 * k - 1;
+
+        /* Eight fine cells for the volume fraction. */
+        double vol = 0.0;
+        for (int dk = 0; dk < 2; dk++) {
+          for (int dj = 0; dj < 2; dj++) {
+            for (int di = 0; di < 2; di++) {
+              vol += FINE(fine->Lambda, fiI + di, fjI + dj, fkI + dk);
+            }
+          }
+        }
+        CRS(coarse->Lambda, i, j, k) = (vol >= 4.0) ? 1.0 : 0.0;
+
+        /* Four fine faces for each aperture. The coarse x-face of cell i is the
+         * fine x-face at 2i, which is the far side of the upper fine child. */
+        double ax = 0.0, ay = 0.0, az = 0.0;
+        for (int b = 0; b < 2; b++) {
+          for (int a = 0; a < 2; a++) {
+            ax += FINE(fine->Ax, 2 * i, fjI + a, fkI + b);
+            ay += FINE(fine->Ay, fiI + a, 2 * j, fkI + b);
+            az += FINE(fine->Az, fiI + a, fjI + b, 2 * k);
+          }
+        }
+        CRS(coarse->Ax, i, j, k) = (ax >= 2.0) ? 1.0 : 0.0;
+        CRS(coarse->Ay, i, j, k) = (ay >= 2.0) ? 1.0 : 0.0;
+        CRS(coarse->Az, i, j, k) = (az >= 2.0) ? 1.0 : 0.0;
+      }
+    }
+  }
+
+  /* The same rule the producer enforces: a solid cell has no open face. */
+  for (int k = 0; k < coarse->kmaxLocal + 2; k++) {
+    for (int j = 0; j < coarse->jmaxLocal + 2; j++) {
+      for (int i = 0; i < coarse->imaxLocal + 2; i++) {
+        if (CRS(coarse->Lambda, i, j, k) > 0.0) {
+          continue;
+        }
+        CRS(coarse->Ax, i, j, k) = 0.0;
+        CRS(coarse->Ay, i, j, k) = 0.0;
+        CRS(coarse->Az, i, j, k) = 0.0;
+        if (i > 0) {
+          CRS(coarse->Ax, i - 1, j, k) = 0.0;
+        }
+        if (j > 0) {
+          CRS(coarse->Ay, i, j - 1, k) = 0.0;
+        }
+        if (k > 0) {
+          CRS(coarse->Az, i, j, k - 1) = 0.0;
+        }
+      }
+    }
+  }
+
+  commExchange(&coarse->comm, coarse->Ax);
+  commExchange(&coarse->comm, coarse->Ay);
+  commExchange(&coarse->comm, coarse->Az);
+  commExchange(&coarse->comm, coarse->Lambda);
+
+#undef FINE
+#undef CRS
+}
+
+/* Global count of cells this level calls fluid. */
+static double countFluid(MgLevelType *lv)
+{
+  int ci       = lv->imaxLocal + 2;
+  int cj       = lv->jmaxLocal + 2;
+  double fluid = 0.0;
+
+  for (int k = 1; k < lv->kmaxLocal + 1; k++) {
+    for (int j = 1; j < lv->jmaxLocal + 1; j++) {
+      for (int i = 1; i < lv->imaxLocal + 1; i++) {
+        if (lv->Lambda[(size_t)k * ci * cj + (size_t)j * ci + (size_t)i] > 0.0) {
+          fluid += 1.0;
+        }
+      }
+    }
+  }
+
+  commReduceAll(&fluid, SUM);
+  return (fluid > 0.0) ? fluid : 1.0;
+}
+
 void initSolver(Solver *s, Discretization *d, Parameter *p)
 {
   solverBaseInit(s, d, p);
@@ -330,6 +497,12 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
   levels[0].dy        = s->grid->dy;
   levels[0].dz        = s->grid->dz;
   levels[0].cells     = (double)s->grid->imax * s->grid->jmax * s->grid->kmax;
+  levels[0].Ax        = (double *)s->Ax;
+  levels[0].Ay        = (double *)s->Ay;
+  levels[0].Az        = (double *)s->Az;
+  levels[0].Lambda    = (double *)s->Lambda;
+  levels[0].ownsGeometry = 0;
+  levels[0].fluidCells   = s->fluidCells;
 
   int built           = 1;
 
@@ -382,6 +555,50 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
     levels[l].r   = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
     zeroField(&levels[l], levels[l].e);
     zeroField(&levels[l], levels[l].r);
+
+    if (l > 0) {
+      levels[l].Ax           = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+      levels[l].Ay           = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+      levels[l].Az           = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+      levels[l].Lambda       = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+      levels[l].ownsGeometry = 1;
+      coarsenGeometry(&levels[l - 1], &levels[l]);
+      levels[l].fluidCells = countFluid(&levels[l]);
+    }
+
+    surfaceListBuild(&levels[l].surface,
+        levels[l].imaxLocal,
+        levels[l].jmaxLocal,
+        levels[l].kmaxLocal,
+        levels[l].iOffset,
+        levels[l].jOffset,
+        levels[l].kOffset,
+        levels[l].Ax,
+        levels[l].Ay,
+        levels[l].Az,
+        levels[l].Lambda,
+        1.0 / (levels[l].dx * levels[l].dx),
+        1.0 / (levels[l].dy * levels[l].dy),
+        1.0 / (levels[l].dz * levels[l].dz));
+  }
+
+  /* A body that stops being represented on a coarse level is reported rather
+   * than left to show up as a convergence problem. The cycle still runs; the
+   * coarse correction is simply blind to the feature. */
+  if (commIsMaster(s->comm)) {
+    double finestSolid = levels[0].cells - levels[0].fluidCells;
+
+    for (int l = 1; l < s->levels; l++) {
+      double solid = levels[l].cells - levels[l].fluidCells;
+
+      if (finestSolid > 0.0 && solid == 0.0) {
+        printf("Multigrid: the obstacle is unresolved at level %d of %d and is not "
+               "represented there\n",
+            l,
+            s->levels);
+        break;
+      }
+    }
   }
 
   s->mgLevels = levels;
@@ -404,32 +621,15 @@ double solve(Solver *s, double *p, const double *rhs)
   /* Multigrid used to run exactly one V-cycle per call, reading eps and itermax
    * into locals it never used, so there was no tolerance for it to converge to
    * and no way for it to agree with the relaxation solvers. */
-  double res = pressureResidualNorm(&fine->comm,
-      &s->bc,
-      p,
-      rhs,
-      fine->imaxLocal,
-      fine->jmaxLocal,
-      fine->kmaxLocal,
-      fine->dx,
-      fine->dy,
-      fine->dz,
-      fine->cells);
+  PressureLevelType desc;
+  levelDescribe(s, fine, &desc);
+
+  double res = pressureResidualNorm(&desc, p, rhs);
 
   while ((res >= epssq) && (cycles < s->itermax)) {
     vcycle(s, FINEST_LEVEL, p, rhs);
 
-    res = pressureResidualNorm(&fine->comm,
-        &s->bc,
-        p,
-        rhs,
-        fine->imaxLocal,
-        fine->jmaxLocal,
-        fine->kmaxLocal,
-        fine->dx,
-        fine->dy,
-        fine->dz,
-        fine->cells);
+    res = pressureResidualNorm(&desc, p, rhs);
     cycles++;
   }
   TIMESTOP(SOLVER);
@@ -501,5 +701,30 @@ void mgTestVcycle(Solver *s, double *p, const double *rhs)
 void mgTestSmooth(Solver *s, int level, double *p, const double *rhs, int sweeps)
 {
   smooth(s, &((MgLevelType *)s->mgLevels)[level], p, rhs, sweeps);
+}
+
+int mgTestLevelSolidCount(Solver *s, int level)
+{
+  MgLevelType *lv = &((MgLevelType *)s->mgLevels)[level];
+  int ci          = lv->imaxLocal + 2;
+  int cj          = lv->jmaxLocal + 2;
+  int solid       = 0;
+
+  for (int k = 1; k < lv->kmaxLocal + 1; k++) {
+    for (int j = 1; j < lv->jmaxLocal + 1; j++) {
+      for (int i = 1; i < lv->imaxLocal + 1; i++) {
+        if (lv->Lambda[(size_t)k * ci * cj + (size_t)j * ci + (size_t)i] == 0.0) {
+          ++solid;
+        }
+      }
+    }
+  }
+
+  return solid;
+}
+
+int mgTestLevelSurfaceCount(Solver *s, int level)
+{
+  return ((MgLevelType *)s->mgLevels)[level].surface.count;
 }
 #endif

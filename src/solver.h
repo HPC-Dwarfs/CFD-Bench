@@ -9,6 +9,7 @@
 #include "grid.h"
 #include "parameter.h"
 #include "pressure-bc.h"
+#include "surface-list.h"
 
 typedef struct {
   /* geometry and grid information */
@@ -34,6 +35,10 @@ typedef struct {
   /* global index of this rank's first interior cell, minus one, so that the
    * red-black colouring can be taken from a cell's global position */
   int iOffset, jOffset, kOffset;
+  /* the cells the geometry-free sweep gets wrong, on the finest grid */
+  SurfaceListType surface;
+  /* global fluid cell count, which residual norms are divided by */
+  double fluidCells;
   /* communication */
   double **r, **e;
   int levels, presmooth, postsmooth;
@@ -69,19 +74,43 @@ extern void mgTestProlongate(Solver *s, int level);
 extern void mgTestResidualField(Solver *s, int level, double *p, const double *rhs);
 extern void mgTestVcycle(Solver *s, double *p, const double *rhs);
 extern void mgTestSmooth(Solver *s, int level, double *p, const double *rhs, int sweeps);
+/* Solid cells and surface-list length at one level, for checking that the
+ * coarsened geometry still represents the body. */
+extern int mgTestLevelSolidCount(Solver *s, int level);
+extern int mgTestLevelSurfaceCount(Solver *s, int level);
 #endif
 
-/* Mean square residual of p against rhs, for comparison with eps * eps. Takes
- * the extents and mesh of one level, so a multigrid level can use it too. */
-extern double pressureResidualNorm(CommType *comm,
-    const PressureBcType *bc,
+/*
+ * Everything the pressure operator needs on one grid. Multigrid builds one per
+ * level; the relaxation solvers build a single one for the finest.
+ */
+typedef struct {
+  CommType *comm;
+  const PressureBcType *bc;
+  const double *Ax, *Ay, *Az, *Lambda;
+  SurfaceListType *list;
+  int imaxLocal, jmaxLocal, kmaxLocal;
+  double dx, dy, dz;
+  double fluidCells;
+} PressureLevelType;
+
+/* Mean square residual over the fluid unknowns, for comparison with eps*eps. */
+extern double pressureResidualNorm(
+    const PressureLevelType *lv, double *p, const double *rhs);
+
+/* Keep the listed cells of one colour before the bulk sweep overwrites them. */
+extern void pressureSaveSurface(
+    const PressureLevelType *lv, const double *p, int color);
+
+/* Relax the listed cells of one colour with their real coefficients, and swap
+ * their wrong contribution to sweepRes for the right one. */
+extern void pressureCorrectSurface(const PressureLevelType *lv,
     double *p,
     const double *rhs,
-    int imaxLocal,
-    int jmaxLocal,
-    int kmaxLocal,
-    double dx,
-    double dy,
-    double dz,
-    double globalCells);
+    int color,
+    double omega,
+    double *sweepRes);
+
+/* Fill a level description from the solver's finest grid. */
+extern void pressureLevelFromSolver(const Solver *s, PressureLevelType *lv);
 #endif

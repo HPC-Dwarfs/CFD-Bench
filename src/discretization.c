@@ -16,6 +16,8 @@
 #include "pressure-bc.h"
 #include "util.h"
 
+static void zeroVelocityOnClosedFaces(Discretization *s);
+
 static void printConfig(Discretization *s)
 {
   if (commIsMaster(&s->comm)) {
@@ -169,6 +171,24 @@ void initDiscretization(Discretization *s, Parameter *params)
 
   if (commIsMaster(&s->comm)) {
     geometryPrintHeader(&spec, &domain);
+  }
+
+  /* The initial condition filled every cell and face alike, so the obstacle has
+   * to be imposed on it before the first step. A solid cell carries an identity
+   * row with a zero right-hand side, whose solution is zero, and the relaxation
+   * only leaves it there if it starts there. */
+  zeroVelocityOnClosedFaces(s);
+
+  for (int k = 0; k < kmaxLocal + 2; k++) {
+    for (int j = 0; j < jmaxLocal + 2; j++) {
+      for (int i = 0; i < imaxLocal + 2; i++) {
+        size_t idx = (size_t)k * (imaxLocal + 2) * (jmaxLocal + 2) +
+                     (size_t)j * (imaxLocal + 2) + (size_t)i;
+        if (s->Lambda[idx] == 0.0) {
+          s->p[idx] = 0.0;
+        }
+      }
+    }
   }
 
 #ifdef VERBOSE
@@ -402,7 +422,8 @@ void computeRHS(Discretization *s)
   double idz    = 1.0 / s->grid.dz;
   double idt    = 1.0 / s->dt;
 
-  double *rhs   = s->rhs;
+  double *rhs          = s->rhs;
+  const double *Lambda = s->Lambda;
   double *f     = s->f;
   double *g     = s->g;
   double *h     = s->h;
@@ -412,10 +433,21 @@ void computeRHS(Discretization *s)
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
+        /* F, G and H are already zero on closed faces, so this divergence is
+         * aperture-weighted without mentioning an aperture. */
         RHS(i, j, k) =
             ((F(i, j, k) - F(i - 1, j, k)) * idx + (G(i, j, k) - G(i, j - 1, k)) * idy +
                 (H(i, j, k) - H(i, j, k - 1)) * idz) *
             idt;
+
+        /* A solid cell carries an identity row, whose right-hand side is zero.
+         * Written as a separate store rather than as a factor of Lambda so that
+         * the arithmetic above is untouched for a fluid cell -- multiplying by
+         * an exact 1.0 is exact, but it lets -ffast-math reassociate the
+         * expression, which moves the last bit of an obstacle-free result. */
+        if (LAM(i, j, k) == 0.0) {
+          RHS(i, j, k) = 0.0;
+        }
       }
     }
   }
@@ -734,6 +766,76 @@ void computeFG(Discretization *s)
       }
     }
   }
+
+  /*
+   * No-slip at the obstacle, taken from the face apertures.
+   *
+   * A closed face carries no velocity unknown, so it carries no momentum
+   * either. Zeroing F, G and H there is what makes the obstacle visible to the
+   * right-hand side: the divergence assembled from them is then already
+   * aperture-weighted, because a closed face contributes nothing to it.
+   *
+   * The stencils above read velocities that lie on closed faces, which are held
+   * at zero, so the body is seen as a no-slip wall to the accuracy of the
+   * scheme. That accuracy is first order at the surface, which is what binary
+   * apertures imply and what a later fractional-aperture phase improves.
+   */
+  const double *Ax = s->Ax;
+  const double *Ay = s->Ay;
+  const double *Az = s->Az;
+
+  for (int k = 0; k < kmaxLocal + 2; k++) {
+    for (int j = 0; j < jmaxLocal + 2; j++) {
+      for (int i = 0; i < imaxLocal + 2; i++) {
+        if (AX(i, j, k) == 0.0) {
+          F(i, j, k) = 0.0;
+        }
+        if (AY(i, j, k) == 0.0) {
+          G(i, j, k) = 0.0;
+        }
+        if (AZ(i, j, k) == 0.0) {
+          H(i, j, k) = 0.0;
+        }
+      }
+    }
+  }
+}
+
+/*
+ * Hold every velocity that lies on a closed face at zero.
+ *
+ * adaptUV never updates such a face, so this only has to be done once, but it
+ * has to be done before the first predictor runs: the initial condition fills
+ * the whole field with u_init, which for a channel setup is not zero.
+ */
+static void zeroVelocityOnClosedFaces(Discretization *s)
+{
+  int imaxLocal    = s->comm.imaxLocal;
+  int jmaxLocal    = s->comm.jmaxLocal;
+  int kmaxLocal    = s->comm.kmaxLocal;
+
+  double *u        = s->u;
+  double *v        = s->v;
+  double *w        = s->w;
+  const double *Ax = s->Ax;
+  const double *Ay = s->Ay;
+  const double *Az = s->Az;
+
+  for (int k = 0; k < kmaxLocal + 2; k++) {
+    for (int j = 0; j < jmaxLocal + 2; j++) {
+      for (int i = 0; i < imaxLocal + 2; i++) {
+        if (AX(i, j, k) == 0.0) {
+          U(i, j, k) = 0.0;
+        }
+        if (AY(i, j, k) == 0.0) {
+          V(i, j, k) = 0.0;
+        }
+        if (AZ(i, j, k) == 0.0) {
+          W(i, j, k) = 0.0;
+        }
+      }
+    }
+  }
 }
 
 void adaptUV(Discretization *s)
@@ -754,12 +856,31 @@ void adaptUV(Discretization *s)
   double factorY = s->dt / s->grid.dy;
   double factorZ = s->dt / s->grid.dz;
 
+  /*
+   * No pressure gradient is applied across a closed face, so the pressure
+   * inside a body -- which the identity rows hold at zero, but which nothing
+   * stops a caller from perturbing -- cannot reach the fluid.
+   *
+   * Written as a factor rather than as a branch. An aperture is 0 or 1, so the
+   * open case is bit-for-bit the update this always did, while the closed case
+   * gives the zero a velocity on a closed face is required to have. A branch
+   * here would say the same thing, but it stops the compiler contracting the
+   * expression the way it does without one, which moves the last bit of every
+   * obstacle-free result.
+   */
+  const double *Ax = s->Ax;
+  const double *Ay = s->Ay;
+  const double *Az = s->Az;
+
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        U(i, j, k) = F(i, j, k) - (P(i + 1, j, k) - P(i, j, k)) * factorX;
-        V(i, j, k) = G(i, j, k) - (P(i, j + 1, k) - P(i, j, k)) * factorY;
-        W(i, j, k) = H(i, j, k) - (P(i, j, k + 1) - P(i, j, k)) * factorZ;
+        U(i, j, k) =
+            AX(i, j, k) * (F(i, j, k) - (P(i + 1, j, k) - P(i, j, k)) * factorX);
+        V(i, j, k) =
+            AY(i, j, k) * (G(i, j, k) - (P(i, j + 1, k) - P(i, j, k)) * factorY);
+        W(i, j, k) =
+            AZ(i, j, k) * (H(i, j, k) - (P(i, j, k + 1) - P(i, j, k)) * factorZ);
       }
     }
   }
