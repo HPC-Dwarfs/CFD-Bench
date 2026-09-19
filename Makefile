@@ -4,7 +4,7 @@
 # license that can be found in the LICENSE file.
 
 #CONFIGURE BUILD SYSTEM
-TARGET	   = NusifSolver-$(TOOLCHAIN)
+TARGET	   = CFD-Bench-$(TOOLCHAIN)
 BUILD_DIR  = ./build/$(TOOLCHAIN)
 SRC_DIR    = ./src
 MAKE_DIR   = ./mk
@@ -81,7 +81,7 @@ distclean: clean
 	@rm -f *.png
 
 info:
-	$(info Nusif-Solver v1.0)
+	$(info CFD-Bench v1.0)
 	$(info Flags: $(CFLAGS))
 	$(Q)$(CC) $(VERSION)
 
