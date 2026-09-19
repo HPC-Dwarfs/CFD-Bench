@@ -164,6 +164,36 @@ if [ -f "$ROOT/tests/geom/skewed.vox" ]; then
     fi
 fi
 
+# Unequal smoothing counts leave the multigrid cycle asymmetric, which is a
+# cycle the setup did not ask for and which a Krylov method cannot be
+# preconditioned by. Refused rather than reconciled.
+uneven() {
+    base 1 1 | sed -e 's/^presmooth 2$/presmooth 4/' -e 's/^postsmooth 2$/postsmooth 2/'
+    printf 'levels 2\n'
+}
+
+# Needs a build that actually constructs a hierarchy: the refusal lives where
+# the cycle is built, so a relaxation solver -- or CG with a cheap
+# preconditioner -- never reaches it and is right not to.
+MGBIN="$ROOT/CFD-Solver-SOLVERMG"
+
+if make -C "$ROOT" SOLVER=mg BUILD_DIR=./build/SOLVERMG \
+    TARGET="CFD-Solver-SOLVERMG" >/dev/null 2>&1; then
+
+    uneven > "$WORK/uneven-smoothing.par"
+
+    saved_bin=$BIN
+    BIN=$MGBIN
+    expect_reject "unequal smoothing counts are refused" "$WORK/uneven-smoothing.par" \
+        "must be equal"
+    BIN=$saved_bin
+
+    rm -rf "$ROOT/build/SOLVERMG" "$MGBIN"
+else
+    echo "FAILED: could not build the multigrid variant"
+    status=1
+fi
+
 # The preconditioner selection, which only the conjugate gradient variant acts
 # on, so it needs its own binary. An unsupported value has to abort at
 # initialization rather than fall back to a default: a benchmark number
@@ -185,18 +215,12 @@ if make -C "$ROOT" SOLVER=cg BUILD_DIR=./build/SOLVERCG \
     expect_reject "an unknown preconditioner is refused" "$WORK/precon-bogus.par" \
         "Unsupported preconditioner"
 
-    # Named separately because it is the one the follow-up change adds: a
-    # parameter file written for that change must not quietly run here with no
-    # preconditioning at all.
-    with_precon "mg" > "$WORK/precon-mg.par"
-    expect_reject "the multigrid preconditioner is refused until it exists" \
-        "$WORK/precon-mg.par" "not implemented yet"
-
     BIN=$saved_bin
 
-    # And the two that are supported are accepted, so the check above is about
-    # the value and not about the parameter being rejected outright.
-    for good in none jacobi; do
+    # And the supported values are accepted, so the check above is about the
+    # value and not about the parameter being rejected outright. mg is among
+    # them now; it was refused by name until the cycle became symmetric.
+    for good in none jacobi mg; do
         with_precon "$good" > "$WORK/precon-$good.par"
         printf -- '-- precon %s is accepted\n' "$good"
 

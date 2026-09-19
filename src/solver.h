@@ -44,9 +44,9 @@ typedef struct {
   /* communication */
   double **r, **e;
   int levels, presmooth, postsmooth;
-  /* the multigrid level hierarchy: extents, mesh, communicator and work arrays
-   * per level. Opaque outside solver-mg.c, which is the only file that builds
-   * or reads it. */
+  /* the multigrid hierarchy, a MultigridType built by whichever solver wants
+   * one. Opaque here: multigrid.h owns the type, and a build that never asks
+   * for a hierarchy leaves this null. */
   void *mgLevels;
   /* The conjugate gradient solver's iteration vectors and its preconditioner.
    * Opaque outside solver-cg.c, the way mgLevels is outside solver-mg.c: four
@@ -63,29 +63,6 @@ extern void initSolver(Solver *, Discretization *, Parameter *);
  * first and then adds whatever only it needs. */
 extern void solverBaseInit(Solver *s, Discretization *d, Parameter *p);
 
-#if defined(TEST) && defined(SOLVER_mg)
-/*
- * Exposed for the check drivers only. The multigrid transfer operators and the
- * V-cycle are otherwise internal to solver-mg.c; a driver needs to drive them
- * one step at a time to check a constant restricts to a constant, that
- * prolongation leaves no fine cell untouched, and that a coarse level uses its
- * own mesh.
- */
-extern int mgTestLevels(Solver *s);
-extern void mgTestLevelExtents(Solver *s, int level, int *im, int *jm, int *km);
-extern void mgTestLevelMesh(Solver *s, int level, double *dx, double *dy, double *dz);
-extern double *mgTestLevelE(Solver *s, int level);
-extern double *mgTestLevelR(Solver *s, int level);
-extern void mgTestRestrict(Solver *s, int level);
-extern void mgTestProlongate(Solver *s, int level);
-extern void mgTestResidualField(Solver *s, int level, double *p, const double *rhs);
-extern void mgTestVcycle(Solver *s, double *p, const double *rhs);
-extern void mgTestSmooth(Solver *s, int level, double *p, const double *rhs, int sweeps);
-/* Solid cells and surface-list length at one level, for checking that the
- * coarsened geometry still represents the body. */
-extern int mgTestLevelSolidCount(Solver *s, int level);
-extern int mgTestLevelSurfaceCount(Solver *s, int level);
-#endif
 
 #if defined(TEST) && defined(SOLVER_cg)
 /*

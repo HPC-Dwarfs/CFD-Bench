@@ -58,18 +58,32 @@ int main(int argc, char **argv)
 #define JMAX 24
 #define KMAX 16
 
+/* The grid the current setup is on. A constant for every check but the
+ * refinement one, which needs the same problem on two grids. */
+static int GridI = IMAX, GridJ = JMAX, GridK = KMAX;
+
 static Parameter Params;
 static Discretization D;
 static Solver S;
 
-static void setup(CommType *base, int boundary, const char *geometry, const char *precon)
+static void setupGrid(CommType *base,
+    int boundary,
+    const char *geometry,
+    const char *precon,
+    int im,
+    int jm,
+    int km)
 {
+  GridI = im;
+  GridJ = jm;
+  GridK = km;
+
   initParameter(&Params);
 
   Params.name         = "check-cg";
-  Params.imax         = IMAX;
-  Params.jmax         = JMAX;
-  Params.kmax         = KMAX;
+  Params.imax         = GridI;
+  Params.jmax         = GridJ;
+  Params.kmax         = GridK;
   Params.xlength      = 2.0;
   Params.ylength      = 1.5;
   Params.zlength      = 1.0;
@@ -96,10 +110,15 @@ static void setup(CommType *base, int boundary, const char *geometry, const char
   Params.bcFront = Params.bcBack = boundary;
 
   D.comm = *base;
-  commPartition(&D.comm, KMAX, JMAX, IMAX);
+  commPartition(&D.comm, GridK, GridJ, GridI);
   initDiscretization(&D, &Params);
   initSolver(&S, &D, &Params);
   initProfiler(&D.comm);
+}
+
+static void setup(CommType *base, int boundary, const char *geometry, const char *precon)
+{
+  setupGrid(base, boundary, geometry, precon, IMAX, JMAX, KMAX);
 }
 
 static size_t fieldSize(void)
@@ -155,7 +174,7 @@ static void randomFluidField(double *x, unsigned seed)
   }
 
   int offsets[NDIMS] = { 0, 0, 0 };
-  commGetOffsets(&D.comm, offsets, KMAX, JMAX, IMAX);
+  commGetOffsets(&D.comm, offsets, GridK, GridJ, GridI);
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
@@ -339,7 +358,7 @@ static void buildExactProblem(double *exact)
   const double *Lambda = D.Lambda;
 
   int offsets[NDIMS]   = { 0, 0, 0 };
-  commGetOffsets(&D.comm, offsets, KMAX, JMAX, IMAX);
+  commGetOffsets(&D.comm, offsets, GridK, GridJ, GridI);
 
   size_t size = fieldSize();
   for (size_t i = 0; i < size; i++) {
@@ -533,6 +552,16 @@ int main(int argc, char **argv)
   setup(&comm, OUTFLOW, sphere, "jacobi");
   checkPreconditioner("jacobi, sphere");
 
+  /* The multigrid preconditioner is held to the same contract as the cheap
+   * ones, and goes through the same routine to prove it. Its symmetry is not
+   * free the way a diagonal's is -- it is the whole reason the cycle had to
+   * become symmetric. */
+  setup(&comm, OUTFLOW, NULL, "mg");
+  checkPreconditioner("mg, obstacle-free");
+
+  setup(&comm, OUTFLOW, sphere, "mg");
+  checkPreconditioner("mg, sphere");
+
   /* ---- A fluid-only dot really is fluid-only ---- */
   {
     size_t size = fieldSize();
@@ -573,7 +602,7 @@ int main(int argc, char **argv)
         "a unit-vector dot over a domain with %.0f solid cells is not the fluid cell "
         "count",
         solidCells);
-    CHECK_TRUE(S.fluidCells + solidCells == (double)IMAX * JMAX * KMAX,
+    CHECK_TRUE(S.fluidCells + solidCells == (double)GridI * GridJ * GridK,
         "the fluid and solid counts %.0f and %.0f do not add up to the domain",
         S.fluidCells,
         solidCells);
@@ -594,6 +623,18 @@ int main(int argc, char **argv)
 
   setup(&comm, NOSLIP, sphere, "jacobi");
   runExactCase(NOSLIP, "neumann, sphere");
+
+  setup(&comm, OUTFLOW, NULL, "mg");
+  runExactCase(OUTFLOW, "dirichlet, obstacle-free, mg");
+
+  setup(&comm, NOSLIP, NULL, "mg");
+  runExactCase(NOSLIP, "neumann, obstacle-free, mg");
+
+  setup(&comm, OUTFLOW, sphere, "mg");
+  runExactCase(OUTFLOW, "dirichlet, sphere, mg");
+
+  setup(&comm, NOSLIP, sphere, "mg");
+  runExactCase(NOSLIP, "neumann, sphere, mg");
 
   /* ---- Solid cells are zero at an intermediate iteration ---- */
   {
@@ -806,6 +847,14 @@ int main(int argc, char **argv)
       solve(&S, D.p, D.rhs);
       int preconditioned = cgTestIterations(&S);
 
+      setup(&comm, cases[c].boundary, cases[c].geometry, "mg");
+      buildExactProblem(exact);
+      for (size_t i = 0; i < size; i++) {
+        D.p[i] = 0.0;
+      }
+      solve(&S, D.p, D.rhs);
+      int multilevel = cgTestIterations(&S);
+
       CHECK_TRUE(preconditioned <= plain,
           "%s: the jacobi solve took %d iterations against %d unpreconditioned, so "
           "the preconditioner costs rather than saves",
@@ -813,15 +862,92 @@ int main(int argc, char **argv)
           preconditioned,
           plain);
 
+      CHECK_TRUE(multilevel <= preconditioned,
+          "%s: the mg solve took %d iterations against %d with jacobi, so the "
+          "multigrid preconditioner costs rather than saves",
+          cases[c].label,
+          multilevel,
+          preconditioned);
+
       if (commIsMaster(&comm)) {
-        printf("%s: %d iterations unpreconditioned, %d with jacobi\n",
+        printf("%s: %d iterations unpreconditioned, %d with jacobi, %d with mg\n",
             cases[c].label,
             plain,
-            preconditioned);
+            preconditioned,
+            multilevel);
       }
 
       free(exact);
     }
+  }
+
+  /* ---- Multigrid preconditioning does not decay under refinement ----
+   *
+   * This is the requirement the whole multigrid preconditioner exists for, and
+   * the one a diagonal preconditioner cannot meet: refining the grid leaves a
+   * multilevel preconditioner's iteration count nearly alone, while a diagonal
+   * one degrades with the condition number.
+   *
+   * The same problem on a grid and on one refined in every direction. The
+   * comparison is of growth factors, not of absolute counts, so it says nothing
+   * about which is faster on any one grid -- only that one of them stops
+   * scaling and the other does not.
+   */
+  {
+    int counts[2][2]; /* [coarse, fine][jacobi, mg] */
+    const char *precons[2] = { "jacobi", "mg" };
+
+    for (int g = 0; g < 2; g++) {
+      int im = g ? 2 * IMAX : IMAX;
+      int jm = g ? 2 * JMAX : JMAX;
+      int km = g ? 2 * KMAX : KMAX;
+
+      for (int pc = 0; pc < 2; pc++) {
+        setupGrid(&comm, OUTFLOW, NULL, precons[pc], im, jm, km);
+
+        size_t size   = fieldSize();
+        double *exact = calloc(size, sizeof(double));
+
+        buildExactProblem(exact);
+        for (size_t i = 0; i < size; i++) {
+          D.p[i] = 0.0;
+        }
+        solve(&S, D.p, D.rhs);
+        counts[g][pc] = cgTestIterations(&S);
+
+        free(exact);
+      }
+    }
+
+    double growthJacobi = (double)counts[1][0] / (double)counts[0][0];
+    double growthMg     = (double)counts[1][1] / (double)counts[0][1];
+
+    CHECK_TRUE(counts[0][0] > 0 && counts[0][1] > 0,
+        "a solve on the coarse grid took no iterations, so there is nothing to "
+        "compare");
+    /* Compared as excess over 1, not as a raw ratio: an ideal multilevel
+     * preconditioner does not grow at all, so its factor tends to 1 and a
+     * fraction-of-the-other-factor threshold could never be met however good it
+     * was. What matters is how much of the growth it avoids. */
+    CHECK_TRUE(growthMg - 1.0 < 0.5 * (growthJacobi - 1.0),
+        "refinement multiplied the mg iteration count by %.2f against %.2f for "
+        "jacobi, so multigrid preconditioning is decaying with the grid much as a "
+        "diagonal one does",
+        growthMg,
+        growthJacobi);
+
+    if (commIsMaster(&comm)) {
+      printf("refinement: jacobi %d -> %d (x%.2f), mg %d -> %d (x%.2f)\n",
+          counts[0][0],
+          counts[1][0],
+          growthJacobi,
+          counts[0][1],
+          counts[1][1],
+          growthMg);
+    }
+
+    /* Leave the driver's grid where the other checks expect it. */
+    setup(&comm, OUTFLOW, NULL, "jacobi");
   }
 
   int failures = CheckFailures;

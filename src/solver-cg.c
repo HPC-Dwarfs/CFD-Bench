@@ -29,6 +29,7 @@
 
 #include "allocate.h"
 #include "comm.h"
+#include "multigrid.h"
 #include "parameter.h"
 #include "pressure-bc.h"
 #include "profiler.h"
@@ -61,6 +62,10 @@ typedef struct {
   int singular;
   /* Iterations the last solve took, for the test seam. */
   int iterations;
+  /* The hierarchy the multigrid preconditioner cycles on, built only when that
+   * preconditioner is selected. Null otherwise, and the two cheap
+   * preconditioners never look at it. */
+  MultigridType *mg;
 } CgStateType;
 
 #define CGSTATE(s) ((CgStateType *)(s)->cgState)
@@ -303,6 +308,7 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
   }
 
   cg->invDiagBulk = 1.0 / (2.0 * (1.0 / dx2 + 1.0 / dy2 + 1.0 / dz2));
+  cg->mg          = NULL;
   cg->singular    = pressureBcIsSingular(&s->bc) ? 1 : 0;
   cg->iterations  = 0;
 
@@ -314,21 +320,39 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
   } else if (strcmp(precon, "jacobi") == 0) {
     cg->precon.apply = preconJacobi;
     cg->precon.ctx   = cg;
+  } else if (strcmp(precon, "mg") == 0) {
+    /* One cycle of the hierarchy, from a zero guess. The hierarchy is this
+     * solver's own: solver-mg.c is not linked into a cg build, which is why the
+     * cycle lives in multigrid.c rather than there. */
+    cg->mg                 = malloc(sizeof(MultigridType));
+
+    MultigridSpecType spec = { .comm = s->comm,
+      .bc                          = &s->bc,
+      .grid                        = s->grid,
+      .Ax                          = s->Ax,
+      .Ay                          = s->Ay,
+      .Az                          = s->Az,
+      .Lambda                      = s->Lambda,
+      .iOffset                     = s->iOffset,
+      .jOffset                     = s->jOffset,
+      .kOffset                     = s->kOffset,
+      .fluidCells                  = s->fluidCells,
+      .levels                      = p->levels,
+      .presmooth                   = p->presmooth,
+      .postsmooth                  = p->postsmooth,
+      .smoothOmega                 = p->smoothOmega };
+
+    multigridBuild(cg->mg, &spec);
+    preconMgInit(&cg->precon, cg->mg);
   } else {
     /* Refused here rather than silently falling back, the way pressureBcInit
      * refuses a boundary code: a run that quietly used a different
      * preconditioner from the one asked for would be a benchmark result
-     * attributed to the wrong method. "mg" is named because it is the one the
-     * follow-up change adds, and a parameter file written for that change would
-     * otherwise run unpreconditioned here. */
+     * attributed to the wrong method. */
     if (commIsMaster(s->comm)) {
       fprintf(stderr,
-          "Unsupported preconditioner \"%s\". Supported: none, jacobi.%s\n",
-          precon,
-          strcmp(precon, "mg") == 0
-              ? " The multigrid preconditioner needs a symmetric V-cycle and is"
-                " not implemented yet."
-              : "");
+          "Unsupported preconditioner \"%s\". Supported: none, jacobi, mg.\n",
+          precon);
     }
     exit(EXIT_FAILURE);
   }
@@ -336,9 +360,13 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
   s->cgState = cg;
 
   if (commIsMaster(s->comm)) {
-    printf("Using Conjugate Gradient solver with the %s preconditioner, %.1f MB of "
-           "extra field storage\n",
-        precon,
+    printf("Using Conjugate Gradient solver with the %s preconditioner", precon);
+
+    if (cg->mg != NULL) {
+      printf(" over %d levels", cg->mg->levels);
+    }
+
+    printf(", %.1f MB of extra field storage\n",
         (double)(5 * size * sizeof(double)) * 1.0e-6);
   }
 }

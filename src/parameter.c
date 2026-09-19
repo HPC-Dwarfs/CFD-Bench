@@ -29,6 +29,7 @@ void initParameter(Parameter *param)
   param->postsmooth        = 5;
   param->geometryFile      = NULL;
   param->precon            = "jacobi";
+  param->smoothOmega       = 1.3;
   param->numberOfParticles = 0;
   param->startTime         = 0.0;
   param->injectTimePeriod  = 0.0;
@@ -88,6 +89,7 @@ void readParameter(Parameter *param, const char *filename)
       PARSE_INT(presmooth);
       PARSE_STRING(precon);
       PARSE_INT(postsmooth);
+      PARSE_REAL(smoothOmega);
       PARSE_REAL(eps);
       PARSE_REAL(omg);
       PARSE_REAL(re);
@@ -157,5 +159,6 @@ void printParameter(Parameter *param)
   printf("\tepsilon (stopping tolerance) : %f\n", param->eps);
   printf("\tgamma (stopping tolerance) : %f\n", param->gamma);
   printf("\tomega (SOR relaxation): %f\n", param->omg);
+  printf("\tomega (multigrid smoothing): %f\n", param->smoothOmega);
   printf("\tpreconditioner (CG): %s\n", param->precon ? param->precon : "none");
 }

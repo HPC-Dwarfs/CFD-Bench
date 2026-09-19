@@ -57,18 +57,49 @@ The preconditioner is chosen with a `precon` line in the parameter file:
 | `precon` | meaning                                                          |
 |----------|------------------------------------------------------------------|
 | `jacobi` | the operator's diagonal, the default. Built from each cell's open faces, so it needs no stored field and reads no geometry array. |
+| `mg`     | one multigrid V-cycle from a zero guess. Much the fastest, and the only one whose iteration count does not decay as the grid is refined. |
 | `none`   | no preconditioning, for comparison.                              |
 
-An unrecognised value is refused at initialization rather than falling back to
-a default. `mg` is named in that message because a multigrid preconditioner is
-the intended next step and needs a symmetric V-cycle, which the current cycle is
-not; a parameter file asking for it is refused until that exists.
+An unrecognised value is refused at initialization rather than falling back to a
+default.
 
-Diagonal preconditioning does not fix the Poisson condition number, so on these
-grids the iteration count still grows with resolution and the conjugate
-gradient solver is not necessarily the fastest in wall-clock terms. What it
-provides is a Krylov framework with the operator, the reductions and the
-null-space handling in place and checked.
+Diagonal preconditioning does not fix the Poisson condition number, so its
+iteration count grows with resolution. The multigrid preconditioner does fix it.
+Doubling the grid in every direction on the Poisson problem the checks use takes
+the diagonally preconditioned solve from 133 iterations to 263, and the
+multigrid preconditioned one from 10 to 11. On `sphere-baseline`, `SOLVER=cg`
+with `precon mg` converges in 5 iterations against 117 with `jacobi`, and runs
+the whole setup in 0.12 s against 0.39 s for `jacobi` and 0.53 s for
+`SOLVER=mg`.
+
+### Multigrid smoothing
+
+The multigrid cycle is symmetric: its post-smoother sweeps the two colours in
+the reverse order of the pre-smoother, its coarsest level is relaxed equally in
+both directions, and its restriction is a scalar multiple of the transpose of
+its prolongation. That is what lets it precondition a Krylov method -- an
+asymmetric preconditioner makes conjugate gradients something other than
+conjugate gradients -- and it is checked directly rather than argued, by
+comparing `x` applied to one cycle of `y` against `y` applied to one cycle of
+`x`.
+
+Two consequences for setups:
+
+- **`presmooth` and `postsmooth` must be equal.** The post-smoother is the
+  transpose of the pre-smoother, and a transpose runs the same number of sweeps.
+  Unequal values are refused at initialization rather than quietly reconciled.
+- **`smoothOmega` is the smoother's relaxation factor, and is not `omg`.** `omg`
+  is the optimum for SOR as a solver; as a smoother a factor that large
+  amplifies the high-frequency modes a smoother exists to damp, and with the
+  symmetric cycle it diverges outright. The default is 1.3, the fastest value
+  measured that both converges and leaves the converged field inside the
+  cross-solver agreement gate. Lower is safer and slower.
+
+Making the cycle correct and symmetric costs `SOLVER=mg` roughly twice the
+cycles it used to take. Part of that is the smoothing factor, and part is that
+the previous cycle was faster partly by accident -- it applied the coarse
+correction twice on every level below the finest. The trade buys a cycle that
+can precondition CG, which is where the speed now is.
 
 ### Obstacles
 
