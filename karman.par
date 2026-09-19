@@ -1,0 +1,75 @@
+#==============================================================================
+#                   Flow past a cylinder in a channel (3D)
+#
+#   A cylinder of radius 1 spanning the full z extent, so the flow is the
+#   three-dimensional counterpart of the two-dimensional karman setup and can be
+#   compared against it directly.
+#
+#   The geometry is a voxel volume; regenerate it with tools/make-geometry.sh
+#   before the first run. Replacing the geometryFile line with
+#
+#       geometryFile  cylinder-z:5.0,4.0,1.0
+#
+#   uses the analytic producer instead, which is not limited by the voxel size.
+#==============================================================================
+
+# Problem specific Data:
+# ---------------------
+
+name karman            # name of flow setup
+
+bcLeft    3			#  flags for boundary conditions
+bcRight   3			#  1 = no-slip      3 = outflow
+bcBottom  1			#  2 = free-slip    4 = periodic
+bcTop     1			#
+bcFront   1			#
+bcBack    1			#
+
+gx     0.0      # Body forces (e.g. gravity)
+gy     0.0      #
+gz     0.0      #
+
+re            1000.0   # Reynolds number
+
+u_init        1.0      # initial value for velocity in x-direction
+v_init        0.0      # initial value for velocity in y-direction
+w_init        0.0      # initial value for velocity in z-direction
+p_init        0.0      # initial value for pressure
+
+# Geometry Data:
+# -------------
+
+xlength       30.0     # domain size in x-direction
+ylength       8.0	   # domain size in y-direction
+zlength       8.0	   # domain size in z-direction
+imax          200      # number of interior cells in x-direction
+jmax          50	   # number of interior cells in y-direction
+kmax          50	   # number of interior cells in z-direction
+
+# Obstacle Geometry Data:
+# -----------------------
+
+geometryFile  geometry/karman.vox   # the cylinder
+
+# Time Data:
+# ---------
+
+te       60.0   # final time
+dt       0.02   # time stepsize
+tau      0.5    # safety factor for time stepsize control (<0 constant delt)
+
+# Multigrid data:
+# ---------
+
+levels        3         # Multigrid levels (should be >= 1)
+presmooth     5         # Pre-smoothning iterations
+postsmooth    5         # Post-smoothning iterations
+
+# Pressure Iteration Data:
+# -----------------------
+
+itermax       50000     # maximal number of pressure iteration in one time step
+eps           0.0001    # stopping tolerance for pressure iteration
+omg           1.8       # relaxation parameter for SOR iteration
+gamma         0.9       # upwind differencing factor gamma
+#===============================================================================

@@ -141,6 +141,9 @@ void initDiscretization(Discretization *s, Parameter *params)
 
   int offsets[NDIMS] = { 0, 0, 0 };
   commGetOffsets(&s->comm, offsets, params->kmax, params->jmax, params->imax);
+  s->iOffset = offsets[IDIM];
+  s->jOffset = offsets[JDIM];
+  s->kOffset = offsets[KDIM];
 
   GeometryDomainType domain = { .imaxLocal = imaxLocal,
     .jmaxLocal                             = jmaxLocal,
@@ -474,6 +477,33 @@ void setSpecialBoundaryCondition(Discretization *s)
       for (int k = 1; k < kmaxLocal + 1; k++) {
         for (int j = 1; j < jmaxLocal + 1; j++) {
           U(0, j, k) = 2.0;
+        }
+      }
+    }
+  } else if (strcmp(s->problem, "schaefer-turek") == 0) {
+    /*
+     * The inflow the benchmark specifies:
+     *
+     *   u(y, z) = 16 Um y z (H - y) (H - z) / H^4
+     *
+     * whose peak is Um and whose mean over the square inlet is 4 Um / 9. The
+     * published cases fix the mean, so Um is 9/4 of it. Anything else makes the
+     * Reynolds number -- and with it the drag the benchmark is about --
+     * something other than what the reference values describe.
+     */
+    if (commIsBoundary(&s->comm, LEFT)) {
+      double height = s->grid.ylength;
+      double depth  = s->grid.zlength;
+      double um     = 2.25;
+
+      for (int k = 1; k < kmaxLocal + 1; k++) {
+        double z = ((k - 1 + s->kOffset) + 0.5) * s->grid.dz;
+
+        for (int j = 1; j < jmaxLocal + 1; j++) {
+          double y   = ((j - 1 + s->jOffset) + 0.5) * s->grid.dy;
+
+          U(0, j, k) = 16.0 * um * y * z * (height - y) * (depth - z) /
+                       (height * height * depth * depth);
         }
       }
     }

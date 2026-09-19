@@ -33,6 +33,16 @@ the Donor cell differencing scheme is used for convective terms.
 - Compressed Red-Black SOR
 - Geometric Multigrid
 
+All three solve the same system, including when the domain contains an
+obstacle, and agree to the solve tolerance.
+
+### Obstacles
+
+The domain may contain an embedded body. Geometry is carried by face apertures
+co-located with the velocities and a volume fraction co-located with the
+pressure, so the momentum predictor, the velocity correction and the pressure
+operator all see the same body. See [Obstacle geometry](#obstacle-geometry).
+
 ## Build
 
 ### 1. Configure
@@ -133,13 +143,134 @@ Provide a parameter file describing the problem to solve:
 ./NusifSolver-CLANG dcavity.par
 ```
 
-Two example test cases are included:
+Five example setups are included:
 
-- `dcavity.par` — lid-driven cavity
-- `canal.par` — empty canal flow
+| Setup | Flow | Geometry |
+|---|---|---|
+| `dcavity.par` | lid-driven cavity | none |
+| `canal.par` | empty canal flow | none |
+| `karman.par` | cylinder in a channel | voxel volume |
+| `backstep.par` | backward-facing step | voxel volume |
+| `schaefer-turek.par` | the published 3D cylinder benchmark, case 3D-2Z | analytic cylinder |
+
+The two setups that reference a voxel volume need it generated first:
+
+```sh
+tools/make-geometry.sh
+```
 
 To plot the pressure solver residual as a function of iteration:
 
 ```sh
 make plot
 ```
+
+## Obstacle geometry
+
+A setup places a body in the domain with a `geometryFile` entry. Without one the
+domain is obstacle-free and the solver behaves exactly as it did before
+obstacles existed.
+
+### Analytic bodies
+
+The value may name a body directly, which is not limited by any sampling
+resolution and is what the reference benchmarks use:
+
+```
+geometryFile  sphere:xc,yc,zc,r
+geometryFile  cylinder-z:xc,yc,r          # also cylinder-x and cylinder-y
+geometryFile  box:x0,y0,z0,x1,y1,z1
+geometryFile  plate-z:z,x0,y0,x1,y1       # also plate-x and plate-y
+```
+
+A plate has no volume: it closes a plane of faces and leaves the cells on both
+sides fluid. That is a body a per-cell obstacle type cannot express at all.
+
+### Voxel volumes
+
+Otherwise the value is a path to a voxel volume, the three-dimensional
+counterpart of the binary PGM the two-dimensional solver reads:
+
+```
+P5V
+# optional comment lines, anywhere in the header
+<nx> <ny> <nz>
+255
+<nx*ny*nz raw bytes, x fastest, then y, then z>
+```
+
+A voxel below 128 is solid, 128 or above is fluid. Voxel `(vx, vy, vz)` covers
+the box `[vx, vx+1) * xlength / nx` and likewise in y and z, so the index order
+matches the axis order and the origin is the domain origin. No axis is flipped.
+
+Write one with the generator:
+
+```sh
+tools/genvox.py sphere --out geometry/sphere.vox \
+    --size 256 256 256 --domain 4 4 4 --center 2 2 2 --radius 0.5
+
+tools/genvox.py cylinder --out geometry/karman.vox \
+    --size 810 216 216 --domain 30 8 8 --axis z --center 5 4 --radius 1
+
+tools/genvox.py box --out geometry/backstep.vox \
+    --size 560 120 120 --domain 7 1.5 1.5 --corner 0 0 0 --extent 1 0.5 1.5
+```
+
+The volumes the shipped setups use are generated rather than committed: at the
+required sampling density a volume is 64 bytes per grid cell, so the karman one
+is 32 MB. `tools/make-geometry.sh` rebuilds them in a few seconds.
+
+### Rules the solver enforces
+
+A volume must provide **at least 4 voxels per grid cell in every direction**.
+Below that the represented body changes as the grid is refined, which would make
+a resolution sweep measure something other than convergence. An under-resolved
+volume is refused rather than sampled.
+
+The **fluid region must be connected** under face connectivity. Each sealed
+pocket contributes an independent constant to the pressure null space, which the
+solvers do not carry, so geometry that encloses one is refused.
+
+A volume whose aspect ratio disagrees with the domain produces a warning and is
+then sampled anisotropically. A volume that cannot be opened, is not a P5V file,
+or is shorter than its header declares is refused. Every refusal happens at
+initialization, before any time step runs, and names the file and the reason.
+
+The run header records which geometry is in use, the voxel dimensions and a
+checksum of the file, so a silently edited volume cannot be mistaken for the
+reference case.
+
+## Tests
+
+```sh
+tests/run-all.sh
+```
+
+This builds each solver variant in turn and runs everything: the check drivers
+at one and several ranks, the inputs the solver has to refuse, geometry against
+rank count, the solvers against an obstacle, and the recorded field baselines.
+
+The pieces can also be run on their own:
+
+| Command | What it covers |
+|---|---|
+| `tests/run-checks.sh [-n RANKS]` | the check drivers in `tests/checks/` |
+| `tests/check-setups.sh` | every shipped setup starts and its body reaches the flow |
+| `tests/check-rejects.sh` | inputs that must be refused |
+| `tests/check-geometry-ranks.sh` | apertures are identical whatever the rank count |
+| `tests/check-solver-obstacle.sh` | the three solvers agree with a body present |
+| `tests/record-baseline.sh [-v]` | record or verify the field baselines |
+
+Baselines and test geometry are generated, not committed; `record-baseline.sh`
+and `tests/make-geom.sh` rebuild them.
+
+The check drivers link against the solver objects, so they need the test build:
+
+```sh
+make tests
+```
+
+which also produces `NusifSolver-<TOOLCHAIN>-test`, a solver that writes a raw
+dump of `p`, `u`, `v` and `w` when `NUSIF_FIELD_DUMP` names a path. `tools/fieldcmp`
+compares two dumps and `tools/fieldprobe.py` reports statistics over a box of
+cells.

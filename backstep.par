@@ -1,0 +1,68 @@
+#==============================================================================
+#                      Flow over a backward-facing step (3D)
+#
+#   The step is an axis-aligned box filling the lower-left corner across the
+#   full z extent. Geometry is a voxel volume; regenerate it with
+#   tools/make-geometry.sh before the first run.
+#==============================================================================
+
+# Problem specific Data:
+# ---------------------
+
+name backstep          # name of flow setup
+
+bcLeft    3			#  flags for boundary conditions
+bcRight   3			#  1 = no-slip      3 = outflow
+bcBottom  1			#  2 = free-slip    4 = periodic
+bcTop     1			#
+bcFront   1			#
+bcBack    1			#
+
+gx     0.0      # Body forces (e.g. gravity)
+gy     0.0      #
+gz     0.0      #
+
+re            100.0    # Reynolds number
+
+u_init        1.0      # initial value for velocity in x-direction
+v_init        0.0      # initial value for velocity in y-direction
+w_init        0.0      # initial value for velocity in z-direction
+p_init        0.0      # initial value for pressure
+
+# Geometry Data:
+# -------------
+
+xlength       7.0      # domain size in x-direction
+ylength       1.5	   # domain size in y-direction
+zlength       1.5	   # domain size in z-direction
+imax          140      # number of interior cells in x-direction
+jmax          30	   # number of interior cells in y-direction
+kmax          30	   # number of interior cells in z-direction
+
+# Obstacle Geometry Data:
+# -----------------------
+
+geometryFile  geometry/backstep.vox   # the step
+
+# Time Data:
+# ---------
+
+te       40.0   # final time
+dt       0.02   # time stepsize
+tau      0.5    # safety factor for time stepsize control (<0 constant delt)
+
+# Multigrid data:
+# ---------
+
+levels        2         # Multigrid levels (should be >= 1)
+presmooth     5         # Pre-smoothning iterations
+postsmooth    5         # Post-smoothning iterations
+
+# Pressure Iteration Data:
+# -----------------------
+
+itermax       50000     # maximal number of pressure iteration in one time step
+eps           0.0001    # stopping tolerance for pressure iteration
+omg           1.8       # relaxation parameter for SOR iteration
+gamma         0.9       # upwind differencing factor gamma
+#===============================================================================

@@ -46,6 +46,7 @@ unset SOLVER
 step "rejected inputs"          "$ROOT/tests/check-rejects.sh"
 step "geometry vs rank count"   "$ROOT/tests/check-geometry-ranks.sh"
 step "solvers vs obstacle"      "$ROOT/tests/check-solver-obstacle.sh"
+step "shipped setups start"     "$ROOT/tests/check-setups.sh"
 step "baselines unchanged"      "$ROOT/tests/record-baseline.sh" -v
 
 printf '\n==================================================\n'

@@ -51,6 +51,35 @@ with open(path, "wb") as f:
         f.write(plane)
 PYEOF
 
+# A known pattern for the round-trip check: solid for x below the midpoint of a
+# unit domain, so a voxel's expected value follows from its index alone.
+"$GEN" box --out "$OUT/probe.vox" --size 32 32 32 \
+    --domain 1 1 1 --corner 0 0 0 --extent 0.5 1 1
+
+# The same content with a deliberately awkward header: comments between the
+# fields, runs of blank lines, and tabs. The reader has to cope with all of it.
+python3 - "$OUT/odd-header.vox" <<'PYEOF'
+import sys
+
+n = 32
+with open(sys.argv[1], "wb") as f:
+    f.write(b"P5V\n")
+    f.write(b"# a header that exercises the parser\n")
+    f.write(b"\n\n")
+    f.write(b"\t32   \n")
+    f.write(b"# the voxel counts are split across lines on purpose\n")
+    f.write(b"32\n\t\t32\n")
+    f.write(b"# and the maximum value has its own comment\n")
+    f.write(b"255\n")
+
+    for z in range(n):
+        plane = bytearray(n * n)
+        for y in range(n):
+            for x in range(n):
+                plane[y * n + x] = 0 if x < n // 2 else 255
+        f.write(plane)
+PYEOF
+
 # An aspect ratio that disagrees with the domain the setups use, so that the
 # warning path is exercised. Not an error: the run continues.
 "$GEN" blank --out "$OUT/skewed.vox" --size 256 64 64 --domain 4 4 4

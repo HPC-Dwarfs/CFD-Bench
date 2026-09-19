@@ -35,6 +35,9 @@ typedef struct {
   double dtBound;
   char *problem;
   int bcLeft, bcRight, bcBottom, bcTop, bcFront, bcBack;
+  /* global index of this rank's first interior cell, so a setup-specific
+   * boundary condition can be written as a function of position */
+  int iOffset, jOffset, kOffset;
   /* the same boundary configuration the solvers use, so that the null-space
    * handling and the solvers agree on whether the operator is singular */
   PressureBcType pressureBc;

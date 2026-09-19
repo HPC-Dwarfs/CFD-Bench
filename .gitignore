@@ -76,3 +76,6 @@ tests/baseline/*.dump
 
 # Generated test geometry: regenerate with tests/make-geom.sh
 tests/geom/*.vox
+
+# Generated benchmark geometry: regenerate with tools/make-geometry.sh
+geometry/*.vox

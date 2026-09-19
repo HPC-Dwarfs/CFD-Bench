@@ -316,6 +316,75 @@ int main(int argc, char **argv)
     freeFields(&f);
   }
 
+  /*
+   * Round-trip: what the generator writes is what the reader sees. The probe
+   * volume is solid below the midpoint in x and fluid above it, so every voxel's
+   * expected value follows from its index.
+   */
+  {
+    GeometryDomainType d = makeDomain(8, 8, 8, 1.0, 1.0, 1.0);
+
+    GeometrySpecType spec;
+    geometryParseSpec(&spec, "tests/geom/probe.vox");
+    geometryVoxelLoad(spec.file, &d);
+
+    int nx, ny, nz;
+    geometryVolumeSize(&nx, &ny, &nz);
+    CHECK_TRUE(nx == 32 && ny == 32 && nz == 32,
+        "probe volume read as %d x %d x %d",
+        nx,
+        ny,
+        nz);
+
+    int wrong = 0;
+    for (int z = 0; z < nz; z += 7) {
+      for (int y = 0; y < ny; y += 7) {
+        for (int x = 0; x < nx; x++) {
+          int got  = geometryVoxelAt(x, y, z);
+          int want = (x < nx / 2) ? 0 : 255;
+          if (got != want) {
+            ++wrong;
+          }
+        }
+      }
+    }
+    CHECK_TRUE(wrong == 0, "%d voxels did not round-trip through the reader", wrong);
+
+    unsigned long long probeSum = geometryChecksum();
+    geometryVoxelFree();
+
+    /* The same content behind a header full of comments, blank lines and tabs
+     * has to parse to the same voxels. */
+    geometryParseSpec(&spec, "tests/geom/odd-header.vox");
+    geometryVoxelLoad(spec.file, &d);
+
+    geometryVolumeSize(&nx, &ny, &nz);
+    CHECK_TRUE(nx == 32 && ny == 32 && nz == 32,
+        "awkward header read as %d x %d x %d",
+        nx,
+        ny,
+        nz);
+
+    wrong = 0;
+    for (int z = 0; z < nz; z += 7) {
+      for (int y = 0; y < ny; y += 7) {
+        for (int x = 0; x < nx; x++) {
+          if (geometryVoxelAt(x, y, z) != ((x < nx / 2) ? 0 : 255)) {
+            ++wrong;
+          }
+        }
+      }
+    }
+    CHECK_TRUE(wrong == 0, "%d voxels differ behind an awkward header", wrong);
+
+    /* Same voxels, different bytes on disk, so the checksum has to differ --
+     * it identifies the file, not the geometry. */
+    CHECK_TRUE(geometryChecksum() != probeSum,
+        "two files with different bytes produced the same checksum");
+
+    geometryVoxelFree();
+  }
+
   /* The same volume on two grids differing by a factor of two must represent
    * the same body, which is what the resolution rule exists to guarantee. */
   {
