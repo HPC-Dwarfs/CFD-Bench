@@ -51,7 +51,6 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
       1.0 / dz2);
 }
 
-
 /*
  * The cut-cell correction in the compressed colour-split layout.
  *
@@ -94,32 +93,31 @@ static void correctSurfaceCompressed(const SurfaceListType *list,
   double delta         = 0.0;
 
   for (int e = begin; e < end; e++) {
-    int i       = list->index[e] % strideJ;
-    int j       = list->jc[e];
-    int k       = list->kc[e];
-    int ic      = list->ic[e];
+    int i        = list->index[e] % strideJ;
+    int j        = list->jc[e];
+    int k        = list->kc[e];
+    int ic       = list->ic[e];
 
-    int icE     = (i & 1) ? ic + 1 : ic;
-    int icW     = (i & 1) ? ic : ic - 1;
+    int icE      = (i & 1) ? ic + 1 : ic;
+    int icW      = (i & 1) ? ic : ic - 1;
 
-    double pOld = list->saved[e];
+    double pOld  = list->saved[e];
 
-    double pE   = other[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (icE)];
-    double pW   = other[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (icW)];
-    double pN   = other[(k) * Nc * (jmaxLocal + 2) + (j + 1) * Nc + (ic)];
-    double pS   = other[(k) * Nc * (jmaxLocal + 2) + (j - 1) * Nc + (ic)];
-    double pT   = other[(k + 1) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)];
-    double pB   = other[(k - 1) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)];
+    double pE    = other[(k)*Nc * (jmaxLocal + 2) + (j)*Nc + (icE)];
+    double pW    = other[(k)*Nc * (jmaxLocal + 2) + (j)*Nc + (icW)];
+    double pN    = other[(k)*Nc * (jmaxLocal + 2) + (j + 1) * Nc + (ic)];
+    double pS    = other[(k)*Nc * (jmaxLocal + 2) + (j - 1) * Nc + (ic)];
+    double pT    = other[(k + 1) * Nc * (jmaxLocal + 2) + (j)*Nc + (ic)];
+    double pB    = other[(k - 1) * Nc * (jmaxLocal + 2) + (j)*Nc + (ic)];
 
-    double rhsc = rhsOwn[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)];
+    double rhsc  = rhsOwn[(k)*Nc * (jmaxLocal + 2) + (j)*Nc + (ic)];
 
-    double rBulk = rhsc - ((pE - 2.0 * pOld + pW) * idx2 +
-                              (pN - 2.0 * pOld + pS) * idy2 +
+    double rBulk = rhsc - ((pE - 2.0 * pOld + pW) * idx2 + (pN - 2.0 * pOld + pS) * idy2 +
                               (pT - 2.0 * pOld + pB) * idz2);
     delta -= rBulk * rBulk;
 
     if (list->solid[e]) {
-      own[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)] = 0.0;
+      own[(k)*Nc * (jmaxLocal + 2) + (j)*Nc + (ic)] = 0.0;
       continue;
     }
 
@@ -128,8 +126,7 @@ static void correctSurfaceCompressed(const SurfaceListType *list,
                    list->aN[e] * (pN - pOld) + list->aS[e] * (pS - pOld) +
                    list->aT[e] * (pT - pOld) + list->aB[e] * (pB - pOld));
 
-    own[(k) * Nc * (jmaxLocal + 2) + (j) * Nc + (ic)] =
-        pOld - omega * r * list->invDiag[e];
+    own[(k)*Nc * (jmaxLocal + 2) + (j)*Nc + (ic)] = pOld - omega * r * list->invDiag[e];
     delta += r * r;
   }
 
@@ -183,9 +180,9 @@ double solve(Solver *s, double *p, const double *rhs)
 
   double factor =
       s->omega * 0.5 * (dx2 * dy2 * dz2) / (dy2 * dz2 + dx2 * dz2 + dx2 * dy2);
-  double epssq    = eps * eps;
-  double cells    = (double)imax * jmax * kmax;
-  int it          = 0;
+  double epssq = eps * eps;
+  double cells = (double)imax * jmax * kmax;
+  int it       = 0;
 
   PressureLevelType lv;
   pressureLevelFromSolver(s, &lv);
@@ -313,8 +310,19 @@ double solve(Solver *s, double *p, const double *rhs)
       }
     }
 
-    correctSurfaceCompressed(&s->surface, 0, pRed, pBlack, rhsRed, rhsBlack, imaxLocal,
-        jmaxLocal, s->omega, idx2, idy2, idz2, &sweepRes);
+    correctSurfaceCompressed(&s->surface,
+        0,
+        pRed,
+        pBlack,
+        rhsRed,
+        rhsBlack,
+        imaxLocal,
+        jmaxLocal,
+        s->omega,
+        idx2,
+        idy2,
+        idz2,
+        &sweepRes);
 
     /* Pass 1: update black cells (neighbors live in pRed) */
     saveSurfaceCompressed(&s->surface, 1, pRed, pBlack, imaxLocal, jmaxLocal);
@@ -343,8 +351,19 @@ double solve(Solver *s, double *p, const double *rhs)
       }
     }
 
-    correctSurfaceCompressed(&s->surface, 1, pRed, pBlack, rhsRed, rhsBlack, imaxLocal,
-        jmaxLocal, s->omega, idx2, idy2, idz2, &sweepRes);
+    correctSurfaceCompressed(&s->surface,
+        1,
+        pRed,
+        pBlack,
+        rhsRed,
+        rhsBlack,
+        imaxLocal,
+        jmaxLocal,
+        s->omega,
+        idx2,
+        idy2,
+        idz2,
+        &sweepRes);
 
     /* The pressure boundary condition in the compressed layout. The sign is
      * what makes it the setup's condition rather than a wall everywhere: +1

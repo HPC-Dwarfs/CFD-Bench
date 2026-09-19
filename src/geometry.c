@@ -79,8 +79,14 @@ static int isSolid(const GeometrySpecType *spec, double x, double y, double z)
  * exactly the faces that plane passes through. Returns 1 when the face whose
  * centre is (x, y, z) and whose normal is `axis` lies on the plate.
  */
-static int faceOnPlate(const GeometrySpecType *spec, GeometryAxisType axis, double x,
-    double y, double z, double dx, double dy, double dz)
+static int faceOnPlate(const GeometrySpecType *spec,
+    GeometryAxisType axis,
+    double x,
+    double y,
+    double z,
+    double dx,
+    double dy,
+    double dz)
 {
   if (spec->kind != GEOMETRY_PLATE || spec->axis != axis) {
     return 0;
@@ -102,8 +108,13 @@ static int faceOnPlate(const GeometrySpecType *spec, GeometryAxisType axis, doub
 }
 
 /* Fraction of a cell box that is solid, by sub-sampling. */
-static double solidFractionCell(const GeometrySpecType *spec, double x0, double y0,
-    double z0, double dx, double dy, double dz)
+static double solidFractionCell(const GeometrySpecType *spec,
+    double x0,
+    double y0,
+    double z0,
+    double dx,
+    double dy,
+    double dz)
 {
   int solid = 0;
 
@@ -122,8 +133,14 @@ static double solidFractionCell(const GeometrySpecType *spec, double x0, double 
 }
 
 /* Fraction of a face rectangle that is solid, by sub-sampling. */
-static double solidFractionFace(const GeometrySpecType *spec, GeometryAxisType axis,
-    double x, double y, double z, double dx, double dy, double dz)
+static double solidFractionFace(const GeometrySpecType *spec,
+    GeometryAxisType axis,
+    double x,
+    double y,
+    double z,
+    double dx,
+    double dy,
+    double dz)
 {
   int solid = 0;
 
@@ -183,9 +200,9 @@ void geometryProduce(const GeometrySpecType *spec,
   for (int k = 0; k < kmaxLocal + 2; k++) {
     for (int j = 0; j < jmaxLocal + 2; j++) {
       for (int i = 0; i < imaxLocal + 2; i++) {
-        int gi     = i - 1 + domain->iOffset;
-        int gj     = j - 1 + domain->jOffset;
-        int gk     = k - 1 + domain->kOffset;
+        int gi = i - 1 + domain->iOffset;
+        int gj = j - 1 + domain->jOffset;
+        int gk = k - 1 + domain->kOffset;
 
         /* Lower corner of the cell in physical coordinates. */
         double x0  = gi * dx;
@@ -197,7 +214,7 @@ void geometryProduce(const GeometrySpecType *spec,
 
         G(Lambda, i, j, k) =
             (inside && solidFractionCell(spec, x0, y0, z0, dx, dy, dz) >= 0.5) ? 0.0
-                                                                              : 1.0;
+                                                                               : 1.0;
 
         /* Face centres: the x-face of this cell is its upper x boundary. */
         double fxx = x0 + dx, fxy = y0 + 0.5 * dy, fxz = z0 + 0.5 * dz;
@@ -308,9 +325,7 @@ void geometryParseSpec(GeometrySpecType *spec, const char *name)
             &spec->yCenter,
             &spec->zCenter,
             &spec->radius) != 4) {
-      fprintf(stderr,
-          "geometryFile: '%s' is not sphere:xc,yc,zc,r\n",
-          name);
+      fprintf(stderr, "geometryFile: '%s' is not sphere:xc,yc,zc,r\n", name);
       exit(EXIT_FAILURE);
     }
     spec->kind = GEOMETRY_SPHERE;
@@ -322,9 +337,7 @@ void geometryParseSpec(GeometrySpecType *spec, const char *name)
     double a, b, r;
 
     if (sscanf(args, "%lf,%lf,%lf", &a, &b, &r) != 3) {
-      fprintf(stderr,
-          "geometryFile: '%s' is not cylinder-<axis>:c1,c2,r\n",
-          name);
+      fprintf(stderr, "geometryFile: '%s' is not cylinder-<axis>:c1,c2,r\n", name);
       exit(EXIT_FAILURE);
     }
 
@@ -369,9 +382,8 @@ void geometryParseSpec(GeometrySpecType *spec, const char *name)
     double at, a0, b0, a1, b1;
 
     if (sscanf(args, "%lf,%lf,%lf,%lf,%lf", &at, &a0, &b0, &a1, &b1) != 5) {
-      fprintf(stderr,
-          "geometryFile: '%s' is not plate-<axis>:position,a0,b0,a1,b1\n",
-          name);
+      fprintf(
+          stderr, "geometryFile: '%s' is not plate-<axis>:position,a0,b0,a1,b1\n", name);
       exit(EXIT_FAILURE);
     }
 
@@ -409,8 +421,7 @@ void geometryParseSpec(GeometrySpecType *spec, const char *name)
 
 static const char *const AXIS_NAME[] = { "x", "y", "z" };
 
-void geometryPrintHeader(
-    const GeometrySpecType *spec, const GeometryDomainType *domain)
+void geometryPrintHeader(const GeometrySpecType *spec, const GeometryDomainType *domain)
 {
   printf("Obstacle geometry:\n");
 
@@ -511,11 +522,10 @@ int geometryValidateConnectivity(CommType *comm,
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
         if (G(Lambda, i, j, k) > 0.0) {
-          double gi     = i - 1 + domain->iOffset;
-          double gj     = j - 1 + domain->jOffset;
-          double gk     = k - 1 + domain->kOffset;
-          G(label, i, j, k) =
-              (gk * domain->jmax + gj) * domain->imax + gi;
+          double gi         = i - 1 + domain->iOffset;
+          double gj         = j - 1 + domain->jOffset;
+          double gk         = k - 1 + domain->kOffset;
+          G(label, i, j, k) = (gk * domain->jmax + gj) * domain->imax + gi;
         }
       }
     }
@@ -581,8 +591,8 @@ int geometryValidateConnectivity(CommType *comm,
   }
 
   /* Each component's lowest-indexed cell still carries its own index. */
-  double regions  = 0.0;
-  double firstCell = -1.0;
+  double regions    = 0.0;
+  double firstCell  = -1.0;
   double secondCell = -1.0;
 
   for (int k = 1; k < kmaxLocal + 1; k++) {

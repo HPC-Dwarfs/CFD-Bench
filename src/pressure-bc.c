@@ -9,12 +9,9 @@
 #include "pressure-bc.h"
 #include "util.h"
 
-static const char *const DIRECTION_NAME[NDIRS] = { "bcLeft",
-  "bcRight",
-  "bcBottom",
-  "bcTop",
-  "bcFront",
-  "bcBack" };
+static const char *const DIRECTION_NAME[NDIRS] = {
+  "bcLeft", "bcRight", "bcBottom", "bcTop", "bcFront", "bcBack"
+};
 
 static const char *typeName(int type)
 {

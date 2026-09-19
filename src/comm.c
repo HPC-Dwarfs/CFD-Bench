@@ -359,8 +359,7 @@ static int coordOfCell(int g, int size, int n)
   return rem + (g - rem * (q + 1)) / q;
 }
 
-int commRankOfCell(
-    CommType *c, int gi, int gj, int gk, int imax, int jmax, int kmax)
+int commRankOfCell(CommType *c, int gi, int gj, int gk, int imax, int jmax, int kmax)
 {
 #if defined(_MPI)
   int coords[NCORDS];
@@ -652,8 +651,8 @@ void commUpdateDatatypes(
     printf("\nNull communicator. Duplication failed !!\n");
   }
 
-  newcomm->rank      = oldcomm->rank;
-  newcomm->size      = oldcomm->size;
+  newcomm->rank = oldcomm->rank;
+  newcomm->size = oldcomm->size;
 
   /* The coarse level sits on the same Cartesian topology as the fine one, so it
    * keeps the same position in it. Without this, coords and dims are whatever

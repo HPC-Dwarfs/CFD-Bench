@@ -96,10 +96,10 @@ static void restrictMG(MgLevelType *fine, MgLevelType *coarse)
   double *fineField   = fine->r;
   double *coarseField = coarse->r;
 
-  int fi = fine->imaxLocal + 2;
-  int fj = fine->jmaxLocal + 2;
-  int ci = coarse->imaxLocal + 2;
-  int cj = coarse->jmaxLocal + 2;
+  int fi              = fine->imaxLocal + 2;
+  int fj              = fine->jmaxLocal + 2;
+  int ci              = coarse->imaxLocal + 2;
+  int cj              = coarse->jmaxLocal + 2;
 
   commExchange(&fine->comm, fineField);
 
@@ -153,14 +153,14 @@ static void prolongate(Solver *s, MgLevelType *coarse, MgLevelType *fine)
   double *coarseField = coarse->e;
   double *fineField   = fine->e;
 
-  int ci = coarse->imaxLocal + 2;
-  int cj = coarse->jmaxLocal + 2;
-  int fi = fine->imaxLocal + 2;
-  int fj = fine->jmaxLocal + 2;
+  int ci              = coarse->imaxLocal + 2;
+  int cj              = coarse->jmaxLocal + 2;
+  int fi              = fine->imaxLocal + 2;
+  int fj              = fine->jmaxLocal + 2;
 
-  int im = fine->imaxLocal;
-  int jm = fine->jmaxLocal;
-  int km = fine->kmaxLocal;
+  int im              = fine->imaxLocal;
+  int jm              = fine->jmaxLocal;
+  int km              = fine->kmaxLocal;
 
   /* Inject: every fine cell takes the value of the coarse cell containing it.
    * Reads no halo. */
@@ -183,8 +183,8 @@ static void prolongate(Solver *s, MgLevelType *coarse, MgLevelType *fine)
   for (int k = 1; k < km + 1; k++) {
     for (int j = 1; j < jm + 1; j++) {
       for (int i = 1; i < im + 1; i++) {
-        size_t idx = (size_t)k * fi * fj + (size_t)j * fi + (size_t)i;
-        size_t nb  = (i & 1) ? idx - 1 : idx + 1;
+        size_t idx     = (size_t)k * fi * fj + (size_t)j * fi + (size_t)i;
+        size_t nb      = (i & 1) ? idx - 1 : idx + 1;
         fineField[idx] = 0.75 * fineField[idx] + 0.25 * fineField[nb];
       }
     }
@@ -196,8 +196,8 @@ static void prolongate(Solver *s, MgLevelType *coarse, MgLevelType *fine)
   for (int k = 1; k < km + 1; k++) {
     for (int j = 1; j < jm + 1; j++) {
       for (int i = 1; i < im + 1; i++) {
-        size_t idx = (size_t)k * fi * fj + (size_t)j * fi + (size_t)i;
-        size_t nb  = (j & 1) ? idx - fi : idx + fi;
+        size_t idx     = (size_t)k * fi * fj + (size_t)j * fi + (size_t)i;
+        size_t nb      = (j & 1) ? idx - fi : idx + fi;
         fineField[idx] = 0.75 * fineField[idx] + 0.25 * fineField[nb];
       }
     }
@@ -236,8 +236,7 @@ static void correct(MgLevelType *lv, double *p)
 
 /* Red-black SOR on one level, with that level's mesh and the global
  * checkerboard. */
-static void smooth(
-    Solver *s, MgLevelType *lv, double *p, const double *rhs, int sweeps)
+static void smooth(Solver *s, MgLevelType *lv, double *p, const double *rhs, int sweeps)
 {
   int imaxLocal = lv->imaxLocal;
   int jmaxLocal = lv->jmaxLocal;
@@ -270,8 +269,7 @@ static void smooth(
 
       for (int k = 1; k < kmaxLocal + 1; k++) {
         for (int j = 1; j < jmaxLocal + 1; j++) {
-          int iStart =
-              colorRowStart(color, j, k, lv->iOffset, lv->jOffset, lv->kOffset);
+          int iStart = colorRowStart(color, j, k, lv->iOffset, lv->jOffset, lv->kOffset);
 
           for (int i = iStart; i < imaxLocal + 1; i += 2) {
             P(i, j, k) -=
@@ -302,10 +300,10 @@ static void residualField(Solver *s, MgLevelType *lv, double *p, const double *r
   int jmaxLocal = lv->jmaxLocal;
   int kmaxLocal = lv->kmaxLocal;
 
-  double idx2 = 1.0 / (lv->dx * lv->dx);
-  double idy2 = 1.0 / (lv->dy * lv->dy);
-  double idz2 = 1.0 / (lv->dz * lv->dz);
-  double *r   = lv->r;
+  double idx2   = 1.0 / (lv->dx * lv->dx);
+  double idy2   = 1.0 / (lv->dy * lv->dy);
+  double idz2   = 1.0 / (lv->dz * lv->dz);
+  double *r     = lv->r;
 
   commExchange(&lv->comm, p);
   pressureBcApply(&s->bc, &lv->comm, p, imaxLocal, jmaxLocal, kmaxLocal);
@@ -367,7 +365,6 @@ static void vcycle(Solver *s, int level, double *p, const double *rhs)
 
   smooth(s, lv, p, rhs, s->postsmooth);
 }
-
 
 /*
  * Coarsen the geometry by one level.
@@ -488,32 +485,32 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
 {
   solverBaseInit(s, d, p);
 
-  s->levels     = p->levels;
-  s->presmooth  = p->presmooth;
-  s->postsmooth = p->postsmooth;
+  s->levels           = p->levels;
+  s->presmooth        = p->presmooth;
+  s->postsmooth       = p->postsmooth;
 
   MgLevelType *levels = malloc((size_t)s->levels * sizeof(MgLevelType));
 
   /* Finest level: the decomposition the solver already has. */
-  levels[0].comm      = *s->comm;
-  levels[0].imaxLocal = s->comm->imaxLocal;
-  levels[0].jmaxLocal = s->comm->jmaxLocal;
-  levels[0].kmaxLocal = s->comm->kmaxLocal;
-  levels[0].iOffset   = s->iOffset;
-  levels[0].jOffset   = s->jOffset;
-  levels[0].kOffset   = s->kOffset;
-  levels[0].dx        = s->grid->dx;
-  levels[0].dy        = s->grid->dy;
-  levels[0].dz        = s->grid->dz;
-  levels[0].cells     = (double)s->grid->imax * s->grid->jmax * s->grid->kmax;
-  levels[0].Ax        = (double *)s->Ax;
-  levels[0].Ay        = (double *)s->Ay;
-  levels[0].Az        = (double *)s->Az;
-  levels[0].Lambda    = (double *)s->Lambda;
+  levels[0].comm         = *s->comm;
+  levels[0].imaxLocal    = s->comm->imaxLocal;
+  levels[0].jmaxLocal    = s->comm->jmaxLocal;
+  levels[0].kmaxLocal    = s->comm->kmaxLocal;
+  levels[0].iOffset      = s->iOffset;
+  levels[0].jOffset      = s->jOffset;
+  levels[0].kOffset      = s->kOffset;
+  levels[0].dx           = s->grid->dx;
+  levels[0].dy           = s->grid->dy;
+  levels[0].dz           = s->grid->dz;
+  levels[0].cells        = (double)s->grid->imax * s->grid->jmax * s->grid->kmax;
+  levels[0].Ax           = (double *)s->Ax;
+  levels[0].Ay           = (double *)s->Ay;
+  levels[0].Az           = (double *)s->Az;
+  levels[0].Lambda       = (double *)s->Lambda;
   levels[0].ownsGeometry = 0;
   levels[0].fluidCells   = s->fluidCells;
 
-  int built           = 1;
+  int built              = 1;
 
   for (int l = 1; l < s->levels; l++) {
     MgLevelType *fine = &levels[l - 1];
@@ -524,8 +521,8 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
     double ok = (fine->imaxLocal % 2 == 0 && fine->jmaxLocal % 2 == 0 &&
                     fine->kmaxLocal % 2 == 0 && fine->imaxLocal / 2 >= 2 &&
                     fine->jmaxLocal / 2 >= 2 && fine->kmaxLocal / 2 >= 2)
-                   ? 1.0
-                   : 0.0;
+                    ? 1.0
+                    : 0.0;
     commReduceAll(&ok, MIN);
 
     if (ok < 0.5) {
@@ -559,9 +556,9 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
   }
 
   for (int l = 0; l < s->levels; l++) {
-    size_t size   = levelSize(&levels[l]);
-    levels[l].e   = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
-    levels[l].r   = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+    size_t size = levelSize(&levels[l]);
+    levels[l].e = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+    levels[l].r = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
     zeroField(&levels[l], levels[l].e);
     zeroField(&levels[l], levels[l].r);
 
@@ -663,7 +660,10 @@ double solve(Solver *s, double *p, const double *rhs)
 #if defined(TEST) && defined(SOLVER_mg)
 /* Test seam. See the declarations in solver.h for why these exist. */
 
-int mgTestLevels(Solver *s) { return s->levels; }
+int mgTestLevels(Solver *s)
+{
+  return s->levels;
+}
 
 void mgTestLevelExtents(Solver *s, int level, int *im, int *jm, int *km)
 {

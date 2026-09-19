@@ -53,13 +53,13 @@ static void printConfig(Discretization *s)
 
 void initDiscretization(Discretization *s, Parameter *params)
 {
-  s->problem      = params->name;
-  s->bcLeft       = params->bcLeft;
-  s->bcRight      = params->bcRight;
-  s->bcBottom     = params->bcBottom;
-  s->bcTop        = params->bcTop;
-  s->bcFront      = params->bcFront;
-  s->bcBack       = params->bcBack;
+  s->problem  = params->name;
+  s->bcLeft   = params->bcLeft;
+  s->bcRight  = params->bcRight;
+  s->bcBottom = params->bcBottom;
+  s->bcTop    = params->bcTop;
+  s->bcFront  = params->bcFront;
+  s->bcBack   = params->bcBack;
 
   pressureBcInit(&s->pressureBc,
       params->bcLeft,
@@ -141,9 +141,9 @@ void initDiscretization(Discretization *s, Parameter *params)
 
   int offsets[NDIMS] = { 0, 0, 0 };
   commGetOffsets(&s->comm, offsets, params->kmax, params->jmax, params->imax);
-  s->iOffset = offsets[IDIM];
-  s->jOffset = offsets[JDIM];
-  s->kOffset = offsets[KDIM];
+  s->iOffset                = offsets[IDIM];
+  s->jOffset                = offsets[JDIM];
+  s->kOffset                = offsets[KDIM];
 
   GeometryDomainType domain = { .imaxLocal = imaxLocal,
     .jmaxLocal                             = jmaxLocal,
@@ -168,8 +168,7 @@ void initDiscretization(Discretization *s, Parameter *params)
   geometryProduce(&spec, &domain, s->Ax, s->Ay, s->Az, s->Lambda);
 
   if (spec.kind != GEOMETRY_NONE) {
-    geometryValidateConnectivity(
-        &s->comm, &domain, s->Ax, s->Ay, s->Az, s->Lambda, 1);
+    geometryValidateConnectivity(&s->comm, &domain, s->Ax, s->Ay, s->Az, s->Lambda, 1);
   }
 
   if (commIsMaster(&s->comm)) {
@@ -416,20 +415,20 @@ void setBoundaryConditions(Discretization *s)
 
 void computeRHS(Discretization *s)
 {
-  int imaxLocal = s->comm.imaxLocal;
-  int jmaxLocal = s->comm.jmaxLocal;
-  int kmaxLocal = s->comm.kmaxLocal;
+  int imaxLocal        = s->comm.imaxLocal;
+  int jmaxLocal        = s->comm.jmaxLocal;
+  int kmaxLocal        = s->comm.kmaxLocal;
 
-  double idx    = 1.0 / s->grid.dx;
-  double idy    = 1.0 / s->grid.dy;
-  double idz    = 1.0 / s->grid.dz;
-  double idt    = 1.0 / s->dt;
+  double idx           = 1.0 / s->grid.dx;
+  double idy           = 1.0 / s->grid.dy;
+  double idz           = 1.0 / s->grid.dz;
+  double idt           = 1.0 / s->dt;
 
   double *rhs          = s->rhs;
   const double *Lambda = s->Lambda;
-  double *f     = s->f;
-  double *g     = s->g;
-  double *h     = s->h;
+  double *f            = s->f;
+  double *g            = s->g;
+  double *h            = s->h;
 
   commShift(&s->comm, f, g, h);
 
@@ -905,12 +904,9 @@ void adaptUV(Discretization *s)
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        U(i, j, k) =
-            AX(i, j, k) * (F(i, j, k) - (P(i + 1, j, k) - P(i, j, k)) * factorX);
-        V(i, j, k) =
-            AY(i, j, k) * (G(i, j, k) - (P(i, j + 1, k) - P(i, j, k)) * factorY);
-        W(i, j, k) =
-            AZ(i, j, k) * (H(i, j, k) - (P(i, j, k + 1) - P(i, j, k)) * factorZ);
+        U(i, j, k) = AX(i, j, k) * (F(i, j, k) - (P(i + 1, j, k) - P(i, j, k)) * factorX);
+        V(i, j, k) = AY(i, j, k) * (G(i, j, k) - (P(i, j + 1, k) - P(i, j, k)) * factorY);
+        W(i, j, k) = AZ(i, j, k) * (H(i, j, k) - (P(i, j, k + 1) - P(i, j, k)) * factorZ);
       }
     }
   }

@@ -51,10 +51,6 @@ int main(int argc, char **argv)
   initSolver(&s, &d, &p);
   initProfiler(&d.comm);
 
-#ifndef VERBOSE
-  initProgress(&d.comm, d.te);
-#endif
-
   /* A body in the domain means the force on it is worth recording: it is what
    * the reference benchmarks are defined in terms of, and it costs a pass over
    * the body's surface. */
@@ -70,6 +66,9 @@ int main(int argc, char **argv)
 
   ParticleTracerType tracer;
   particleTracerInit(&tracer, &d, &p);
+#ifndef VERBOSE
+  initProgress(&d.comm, d.te);
+#endif
 
   double tau = d.tau;
   double te  = d.te;

@@ -50,13 +50,11 @@ typedef struct {
   double xLo, xHi, yLo, yHi, zLo, zHi;
 } ParticleTracerType;
 
-extern void particleTracerInit(
-    ParticleTracerType *t, Discretization *d, Parameter *p);
+extern void particleTracerInit(ParticleTracerType *t, Discretization *d, Parameter *p);
 
 /* Inject if a batch is due, advance every particle by the step the flow solver
  * just took, hand over the ones that left this rank, and write if due. */
-extern void particleTracerStep(
-    ParticleTracerType *t, Discretization *d, double time);
+extern void particleTracerStep(ParticleTracerType *t, Discretization *d, double time);
 
 /* Report the totals and release the pool. */
 extern void particleTracerFinalize(ParticleTracerType *t, Discretization *d);
@@ -71,8 +69,7 @@ extern void particleTracerSeed(
     const ParticleTracerType *t, long batch, int index, double *x, double *y, double *z);
 extern int particleTracerLiveCount(const ParticleTracerType *t);
 extern void particleTracerInject(ParticleTracerType *t, Discretization *d);
-extern void particleTracerAdvance(
-    ParticleTracerType *t, Discretization *d, double dt);
+extern void particleTracerAdvance(ParticleTracerType *t, Discretization *d, double dt);
 extern void particleTracerTotals(const ParticleTracerType *t,
     Discretization *d,
     double *injected,

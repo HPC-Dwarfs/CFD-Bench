@@ -86,7 +86,10 @@ static void removeAt(ParticleTracerType *t, int i)
   --t->count;
 }
 
-int particleTracerLiveCount(const ParticleTracerType *t) { return t->count; }
+int particleTracerLiveCount(const ParticleTracerType *t)
+{
+  return t->count;
+}
 
 /* ---------------------------------------------------------------------- */
 
@@ -100,14 +103,19 @@ static int ownsPosition(const ParticleTracerType *t, double x, double y, double 
 
 static int insideDomain(Discretization *d, double x, double y, double z)
 {
-  return x >= 0.0 && x < d->grid.xlength && y >= 0.0 && y < d->grid.ylength &&
-         z >= 0.0 && z < d->grid.zlength;
+  return x >= 0.0 && x < d->grid.xlength && y >= 0.0 && y < d->grid.ylength && z >= 0.0 &&
+         z < d->grid.zlength;
 }
 
 /* The local cell holding a position, in this rank's 1-based interior indices. */
-static void localCell(
-    ParticleTracerType *t, Discretization *d, double x, double y, double z, int *ci,
-    int *cj, int *ck)
+static void localCell(ParticleTracerType *t,
+    Discretization *d,
+    double x,
+    double y,
+    double z,
+    int *ci,
+    int *cj,
+    int *ck)
 {
   (void)t;
   *ci = (int)floor(x / d->grid.dx) - d->iOffset + 1;
@@ -140,8 +148,14 @@ static int cellIsFluid(Discretization *d, int i, int j, int k)
  * centre and sits exactly on the x-faces, and likewise for v and w. The offsets
  * below are what that difference amounts to in index space.
  */
-static double interpolate(Discretization *d, const double *field, double x, double y,
-    double z, double offX, double offY, double offZ)
+static double interpolate(Discretization *d,
+    const double *field,
+    double x,
+    double y,
+    double z,
+    double offX,
+    double offY,
+    double offZ)
 {
   int imaxLocal = d->comm.imaxLocal;
   int jmaxLocal = d->comm.jmaxLocal;
@@ -187,19 +201,19 @@ static double interpolate(Discretization *d, const double *field, double x, doub
     fz = 0.0;
   }
 
-  int stride  = imaxLocal + 2;
-  int slab    = (imaxLocal + 2) * (jmaxLocal + 2);
+  int stride = imaxLocal + 2;
+  int slab   = (imaxLocal + 2) * (jmaxLocal + 2);
 
-  double sum  = 0.0;
+  double sum = 0.0;
 
   for (int dk = 0; dk < 2; dk++) {
     double wk = dk ? fz : 1.0 - fz;
     for (int dj = 0; dj < 2; dj++) {
       double wj = dj ? fy : 1.0 - fy;
       for (int di = 0; di < 2; di++) {
-        double wi  = di ? fx : 1.0 - fx;
-        size_t idx = (size_t)(k0 + dk) * slab + (size_t)(j0 + dj) * stride +
-                     (size_t)(i0 + di);
+        double wi = di ? fx : 1.0 - fx;
+        size_t idx =
+            (size_t)(k0 + dk) * slab + (size_t)(j0 + dj) * stride + (size_t)(i0 + di);
         sum += wi * wj * wk * field[idx];
       }
     }
@@ -220,8 +234,14 @@ static double interpolate(Discretization *d, const double *field, double x, doub
  *
  * Returns 1 when the path is blocked.
  */
-static int pathBlocked(ParticleTracerType *t, Discretization *d, double x0, double y0,
-    double z0, double x1, double y1, double z1)
+static int pathBlocked(ParticleTracerType *t,
+    Discretization *d,
+    double x0,
+    double y0,
+    double z0,
+    double x1,
+    double y1,
+    double z1)
 {
   int imaxLocal    = d->comm.imaxLocal;
   int jmaxLocal    = d->comm.jmaxLocal;
@@ -239,22 +259,22 @@ static int pathBlocked(ParticleTracerType *t, Discretization *d, double x0, doub
   int ti, tj, tk;
   localCell(t, d, x1, y1, z1, &ti, &tj, &tk);
 
-  double sx      = x1 - x0;
-  double sy      = y1 - y0;
-  double sz      = z1 - z0;
+  double sx = x1 - x0;
+  double sy = y1 - y0;
+  double sz = z1 - z0;
 
-  int stepI      = (sx > 0.0) ? 1 : (sx < 0.0 ? -1 : 0);
-  int stepJ      = (sy > 0.0) ? 1 : (sy < 0.0 ? -1 : 0);
-  int stepK      = (sz > 0.0) ? 1 : (sz < 0.0 ? -1 : 0);
+  int stepI = (sx > 0.0) ? 1 : (sx < 0.0 ? -1 : 0);
+  int stepJ = (sy > 0.0) ? 1 : (sy < 0.0 ? -1 : 0);
+  int stepK = (sz > 0.0) ? 1 : (sz < 0.0 ? -1 : 0);
 
   /* Parameter along the segment at which the next face in each direction is
    * reached, and how far apart successive ones are. */
-  double tMaxX   = INFINITY, tMaxY = INFINITY, tMaxZ = INFINITY;
+  double tMaxX = INFINITY, tMaxY = INFINITY, tMaxZ = INFINITY;
   double tDeltaX = INFINITY, tDeltaY = INFINITY, tDeltaZ = INFINITY;
 
-  int gi         = ci - 1 + d->iOffset;
-  int gj         = cj - 1 + d->jOffset;
-  int gk         = ck - 1 + d->kOffset;
+  int gi = ci - 1 + d->iOffset;
+  int gj = cj - 1 + d->jOffset;
+  int gk = ck - 1 + d->kOffset;
 
   if (stepI != 0) {
     double next = (stepI > 0) ? (gi + 1) * dx : gi * dx;
@@ -371,9 +391,9 @@ void particleTracerAdvance(ParticleTracerType *t, Discretization *d, double dt)
 
     /* u sits on the x-faces and at cell centres in y and z; v and w are the
      * same statement rotated. */
-    double u = interpolate(d, d->u, x, y, z, 0.0, 0.5, 0.5);
-    double v = interpolate(d, d->v, x, y, z, 0.5, 0.0, 0.5);
-    double w = interpolate(d, d->w, x, y, z, 0.5, 0.5, 0.0);
+    double u  = interpolate(d, d->u, x, y, z, 0.0, 0.5, 0.5);
+    double v  = interpolate(d, d->v, x, y, z, 0.5, 0.0, 0.5);
+    double w  = interpolate(d, d->w, x, y, z, 0.5, 0.5, 0.0);
 
     double nx = x + dt * u;
     double ny = y + dt * v;
@@ -439,8 +459,8 @@ void particleTracerMigrate(ParticleTracerType *t, Discretization *d)
   int *recvDispl = calloc((size_t)size, sizeof(int));
 
   /* Which rank each departing particle belongs to. */
-  int *owner     = malloc((size_t)(t->count > 0 ? t->count : 1) * sizeof(int));
-  int leaving    = 0;
+  int *owner  = malloc((size_t)(t->count > 0 ? t->count : 1) * sizeof(int));
+  int leaving = 0;
 
   for (int i = 0; i < t->count; i++) {
     double x = t->pool[i].x;
@@ -452,12 +472,12 @@ void particleTracerMigrate(ParticleTracerType *t, Discretization *d)
       continue;
     }
 
-    int gi   = (int)floor(x / d->grid.dx);
-    int gj   = (int)floor(y / d->grid.dy);
-    int gk   = (int)floor(z / d->grid.dz);
+    int gi = (int)floor(x / d->grid.dx);
+    int gj = (int)floor(y / d->grid.dy);
+    int gk = (int)floor(z / d->grid.dz);
 
-    owner[i] = commRankOfCell(
-        &d->comm, gi, gj, gk, d->grid.imax, d->grid.jmax, d->grid.kmax);
+    owner[i] =
+        commRankOfCell(&d->comm, gi, gj, gk, d->grid.imax, d->grid.jmax, d->grid.kmax);
     ++sendCount[owner[i]];
     ++leaving;
   }
@@ -530,14 +550,14 @@ void particleTracerMigrate(ParticleTracerType *t, Discretization *d)
 
 static void writeParticles(ParticleTracerType *t, Discretization *d)
 {
-  int rank         = d->comm.rank;
-  int size         = d->comm.size;
+  int rank          = d->comm.rank;
+  int size          = d->comm.size;
 
-  int local        = t->count;
-  int *counts      = NULL;
-  int *displs      = NULL;
+  int local         = t->count;
+  int *counts       = NULL;
+  int *displs       = NULL;
   ParticleType *all = NULL;
-  int total        = local;
+  int total         = local;
 
 #if defined(_MPI)
   if (rank == 0) {

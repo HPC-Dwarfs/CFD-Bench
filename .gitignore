@@ -81,3 +81,4 @@ tests/geom/*.vox
 geometry/*.vox
 /forces.dat
 /vis_files/
+/CFD-Solver-CLANG

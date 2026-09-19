@@ -101,8 +101,7 @@ extern double pressureResidualNorm(
     const PressureLevelType *lv, double *p, const double *rhs);
 
 /* Keep the listed cells of one colour before the bulk sweep overwrites them. */
-extern void pressureSaveSurface(
-    const PressureLevelType *lv, const double *p, int color);
+extern void pressureSaveSurface(const PressureLevelType *lv, const double *p, int color);
 
 /* Relax the listed cells of one colour with their real coefficients, and swap
  * their wrong contribution to sweepRes for the right one. */

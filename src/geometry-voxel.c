@@ -220,14 +220,14 @@ void geometryVoxelLoad(const char *path, const GeometryDomainType *domain)
   double vz = (double)Volume.nz / domain->kmax;
 
   int lo[3], hi[3];
-  lo[0] = (int)((domain->iOffset - 1) * vx) - 1;
-  hi[0] = (int)((domain->iOffset + domain->imaxLocal + 1) * vx) + 1;
-  lo[1] = (int)((domain->jOffset - 1) * vy) - 1;
-  hi[1] = (int)((domain->jOffset + domain->jmaxLocal + 1) * vy) + 1;
-  lo[2] = (int)((domain->kOffset - 1) * vz) - 1;
-  hi[2] = (int)((domain->kOffset + domain->kmaxLocal + 1) * vz) + 1;
+  lo[0]    = (int)((domain->iOffset - 1) * vx) - 1;
+  hi[0]    = (int)((domain->iOffset + domain->imaxLocal + 1) * vx) + 1;
+  lo[1]    = (int)((domain->jOffset - 1) * vy) - 1;
+  hi[1]    = (int)((domain->jOffset + domain->jmaxLocal + 1) * vy) + 1;
+  lo[2]    = (int)((domain->kOffset - 1) * vz) - 1;
+  hi[2]    = (int)((domain->kOffset + domain->kmaxLocal + 1) * vz) + 1;
 
-  int n[3]  = { Volume.nx, Volume.ny, Volume.nz };
+  int n[3] = { Volume.nx, Volume.ny, Volume.nz };
 
   for (int d = 0; d < 3; d++) {
     if (lo[d] < 0) {
@@ -265,8 +265,7 @@ void geometryVoxelLoad(const char *path, const GeometryDomainType *domain)
         fail(path, "cannot be seeked to a voxel row");
       }
 
-      unsigned char *row =
-          Volume.data + ((size_t)z * Volume.sy + y) * Volume.sx;
+      unsigned char *row = Volume.data + ((size_t)z * Volume.sy + y) * Volume.sx;
 
       if (fread(row, 1, (size_t)Volume.sx, fp) != (size_t)Volume.sx) {
         fail(path, "ends in the middle of a voxel row");
@@ -306,7 +305,10 @@ int geometryVoxelIsSolid(double x, double y, double z)
   return Volume.data[((size_t)lz * Volume.sy + ly) * Volume.sx + lx] < SOLID_THRESHOLD;
 }
 
-size_t geometryVoxelSlabBytes(void) { return Volume.data == NULL ? 0 : Volume.bytes; }
+size_t geometryVoxelSlabBytes(void)
+{
+  return Volume.data == NULL ? 0 : Volume.bytes;
+}
 
 void geometryVoxelFree(void)
 {
@@ -315,7 +317,10 @@ void geometryVoxelFree(void)
   Volume.bytes = 0;
 }
 
-unsigned long long geometryChecksum(void) { return Volume.checksum; }
+unsigned long long geometryChecksum(void)
+{
+  return Volume.checksum;
+}
 
 void geometryVolumeSize(int *nx, int *ny, int *nz)
 {

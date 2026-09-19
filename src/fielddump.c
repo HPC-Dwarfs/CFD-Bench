@@ -15,7 +15,10 @@
 #define L(v, i, j, k)                                                                    \
   v[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
 
-const char *fieldDumpPath(void) { return getenv("NUSIF_FIELD_DUMP"); }
+const char *fieldDumpPath(void)
+{
+  return getenv("NUSIF_FIELD_DUMP");
+}
 
 /* Copy this rank's interior of one field into a contiguous buffer, in the same
  * k-slowest order the global array uses. */
@@ -65,21 +68,21 @@ void fieldDumpWrite(CommType *comm,
     const double *v,
     const double *w)
 {
-  int imaxLocal        = comm->imaxLocal;
-  int jmaxLocal        = comm->jmaxLocal;
-  int kmaxLocal        = comm->kmaxLocal;
+  int imaxLocal              = comm->imaxLocal;
+  int jmaxLocal              = comm->jmaxLocal;
+  int kmaxLocal              = comm->kmaxLocal;
 
-  int imax             = grid->imax;
-  int jmax             = grid->jmax;
-  int kmax             = grid->kmax;
+  int imax                   = grid->imax;
+  int jmax                   = grid->jmax;
+  int kmax                   = grid->kmax;
 
   const double *src[NFIELDS] = { p, u, v, w };
 
-  size_t localCount    = (size_t)imaxLocal * jmaxLocal * kmaxLocal;
-  size_t globalCount   = (size_t)imax * jmax * kmax;
+  size_t localCount          = (size_t)imaxLocal * jmaxLocal * kmaxLocal;
+  size_t globalCount         = (size_t)imax * jmax * kmax;
 
-  double *block        = allocate(ARRAY_ALIGNMENT, localCount * sizeof(double));
-  double *global       = NULL;
+  double *block              = allocate(ARRAY_ALIGNMENT, localCount * sizeof(double));
+  double *global             = NULL;
 
   if (commIsMaster(comm)) {
     global = allocate(ARRAY_ALIGNMENT, NFIELDS * globalCount * sizeof(double));
@@ -106,12 +109,9 @@ void fieldDumpWrite(CommType *comm,
 
 #if defined(_MPI)
     if (!commIsMaster(comm)) {
-      int meta[6] = { offsets[IDIM],
-        offsets[JDIM],
-        offsets[KDIM],
-        imaxLocal,
-        jmaxLocal,
-        kmaxLocal };
+      int meta[6] = {
+        offsets[IDIM], offsets[JDIM], offsets[KDIM], imaxLocal, jmaxLocal, kmaxLocal
+      };
       MPI_Send(meta, 6, MPI_INT, 0, 0, comm->comm);
       MPI_Send(block, (int)localCount, MPI_DOUBLE, 0, 1, comm->comm);
     } else {

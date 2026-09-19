@@ -12,21 +12,21 @@
 
 void initParameter(Parameter *param)
 {
-  param->xlength    = 1.0;
-  param->ylength    = 1.0;
-  param->zlength    = 1.0;
-  param->imax       = 100;
-  param->jmax       = 100;
-  param->kmax       = 100;
-  param->itermax    = 1000;
-  param->eps        = 0.0001;
-  param->omg        = 1.7;
-  param->re         = 100.0;
-  param->gamma      = 0.9;
-  param->tau        = 0.5;
-  param->levels     = 5;
-  param->presmooth  = 5;
-  param->postsmooth = 5;
+  param->xlength           = 1.0;
+  param->ylength           = 1.0;
+  param->zlength           = 1.0;
+  param->imax              = 100;
+  param->jmax              = 100;
+  param->kmax              = 100;
+  param->itermax           = 1000;
+  param->eps               = 0.0001;
+  param->omg               = 1.7;
+  param->re                = 100.0;
+  param->gamma             = 0.9;
+  param->tau               = 0.5;
+  param->levels            = 5;
+  param->presmooth         = 5;
+  param->postsmooth        = 5;
   param->geometryFile      = NULL;
   param->numberOfParticles = 0;
   param->startTime         = 0.0;
@@ -55,7 +55,7 @@ void readParameter(Parameter *param, const char *filename)
 
     for (i = 0; line[i] != '\0' && line[i] != '#'; i++)
       ;
-    line[i]   = '\0';
+    line[i] = '\0';
 
     /* Split on any whitespace, not on spaces alone, and trim what is left.
      * A value used to keep whatever trailing whitespace the line carried, so a

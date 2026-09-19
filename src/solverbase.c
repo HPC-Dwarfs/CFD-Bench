@@ -44,8 +44,7 @@ void pressureSweepTimesReset(void)
  * sweep needs no index compression; its solution is zero.
  */
 
-double pressureResidualNorm(
-    const PressureLevelType *lv, double *p, const double *rhs)
+double pressureResidualNorm(const PressureLevelType *lv, double *p, const double *rhs)
 {
   int imaxLocal        = lv->imaxLocal;
   int jmaxLocal        = lv->jmaxLocal;
@@ -74,14 +73,13 @@ double pressureResidualNorm(
         }
 
         double pc = P(i, j, k);
-        double r =
-            LAM(i, j, k) * RHS(i, j, k) -
-            (AX(i, j, k) * (P(i + 1, j, k) - pc) * idx2 +
-                AX(i - 1, j, k) * (P(i - 1, j, k) - pc) * idx2 +
-                AY(i, j, k) * (P(i, j + 1, k) - pc) * idy2 +
-                AY(i, j - 1, k) * (P(i, j - 1, k) - pc) * idy2 +
-                AZ(i, j, k) * (P(i, j, k + 1) - pc) * idz2 +
-                AZ(i, j, k - 1) * (P(i, j, k - 1) - pc) * idz2);
+        double r  = LAM(i, j, k) * RHS(i, j, k) -
+                    (AX(i, j, k) * (P(i + 1, j, k) - pc) * idx2 +
+                        AX(i - 1, j, k) * (P(i - 1, j, k) - pc) * idx2 +
+                        AY(i, j, k) * (P(i, j + 1, k) - pc) * idy2 +
+                        AY(i, j - 1, k) * (P(i, j - 1, k) - pc) * idy2 +
+                        AZ(i, j, k) * (P(i, j, k + 1) - pc) * idz2 +
+                        AZ(i, j, k - 1) * (P(i, j, k - 1) - pc) * idz2);
 
         res += r * r;
       }
@@ -145,13 +143,13 @@ void pressureCorrectSurface(const PressureLevelType *lv,
   double idy2   = 1.0 / (lv->dy * lv->dy);
   double idz2   = 1.0 / (lv->dz * lv->dz);
 
-  int strideJ       = imaxLocal + 2;
-  int strideK       = (imaxLocal + 2) * (jmaxLocal + 2);
+  int strideJ   = imaxLocal + 2;
+  int strideK   = (imaxLocal + 2) * (jmaxLocal + 2);
 
-  int begin         = (color == 0) ? 0 : list->colorCount[0];
-  int end           = begin + list->colorCount[color];
+  int begin     = (color == 0) ? 0 : list->colorCount[0];
+  int end       = begin + list->colorCount[color];
 
-  double delta      = 0.0;
+  double delta  = 0.0;
 
 #ifdef PROFILING
   double surfaceStart = getTimeStamp();
@@ -169,9 +167,9 @@ void pressureCorrectSurface(const PressureLevelType *lv,
     double pB   = p[idx - strideK];
 
     /* Undo this cell's contribution to the bulk sweep's residual. */
-    double rBulk = rhs[idx] - ((pE - 2.0 * pOld + pW) * idx2 +
-                                  (pN - 2.0 * pOld + pS) * idy2 +
-                                  (pT - 2.0 * pOld + pB) * idz2);
+    double rBulk =
+        rhs[idx] - ((pE - 2.0 * pOld + pW) * idx2 + (pN - 2.0 * pOld + pS) * idy2 +
+                       (pT - 2.0 * pOld + pB) * idz2);
     delta -= rBulk * rBulk;
 
     if (list->solid[e]) {
@@ -186,7 +184,7 @@ void pressureCorrectSurface(const PressureLevelType *lv,
                    list->aN[e] * (pN - pOld) + list->aS[e] * (pS - pOld) +
                    list->aT[e] * (pT - pOld) + list->aB[e] * (pB - pOld));
 
-    p[idx] = pOld - omega * r * list->invDiag[e];
+    p[idx]   = pOld - omega * r * list->invDiag[e];
     delta += r * r;
   }
 
@@ -219,13 +217,8 @@ void solverBaseInit(Solver *s, Discretization *d, Parameter *p)
   s->bcFront  = p->bcFront;
   s->bcBack   = p->bcBack;
 
-  pressureBcInit(&s->bc,
-      p->bcLeft,
-      p->bcRight,
-      p->bcBottom,
-      p->bcTop,
-      p->bcFront,
-      p->bcBack);
+  pressureBcInit(
+      &s->bc, p->bcLeft, p->bcRight, p->bcBottom, p->bcTop, p->bcFront, p->bcBack);
 
   int offsets[NDIMS] = { 0, 0, 0 };
   commGetOffsets(s->comm, offsets, p->kmax, p->jmax, p->imax);

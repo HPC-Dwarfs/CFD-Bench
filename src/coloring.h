@@ -25,8 +25,7 @@
  */
 
 /* The colour, 0 or 1, of the interior cell at local (i, j, k). */
-static inline int colorOf(
-    int i, int j, int k, int iOffset, int jOffset, int kOffset)
+static inline int colorOf(int i, int j, int k, int iOffset, int jOffset, int kOffset)
 {
   return ((i + iOffset) + (j + jOffset) + (k + kOffset)) & 1;
 }

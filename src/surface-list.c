@@ -7,7 +7,8 @@
 #include "coloring.h"
 #include "surface-list.h"
 
-#define IDX(i, j, k) ((k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i))
+#define IDX(i, j, k)                                                                     \
+  ((k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i))
 
 /* True when the plain stencil would get this cell wrong. */
 static int needsCorrection(int i,
@@ -95,7 +96,7 @@ void surfaceListBuild(SurfaceListType *list,
   list->lambda  = malloc((size_t)count * sizeof(double));
   list->saved   = malloc((size_t)count * sizeof(double));
 
-  int at = 0;
+  int at        = 0;
 
   /* Colour 0 first, then colour 1; each segment row-major, so the pass over it
    * walks memory forwards and is the same on every run. */
@@ -110,28 +111,28 @@ void surfaceListBuild(SurfaceListType *list,
             continue;
           }
 
-          double aE     = Ax[IDX(i, j, k)] * idx2;
-          double aW     = Ax[IDX(i - 1, j, k)] * idx2;
-          double aN     = Ay[IDX(i, j, k)] * idy2;
-          double aS     = Ay[IDX(i, j - 1, k)] * idy2;
-          double aT     = Az[IDX(i, j, k)] * idz2;
-          double aB     = Az[IDX(i, j, k - 1)] * idz2;
-          double diag   = aE + aW + aN + aS + aT + aB;
-          double lambda = Lambda[IDX(i, j, k)];
+          double aE        = Ax[IDX(i, j, k)] * idx2;
+          double aW        = Ax[IDX(i - 1, j, k)] * idx2;
+          double aN        = Ay[IDX(i, j, k)] * idy2;
+          double aS        = Ay[IDX(i, j - 1, k)] * idy2;
+          double aT        = Az[IDX(i, j, k)] * idz2;
+          double aB        = Az[IDX(i, j, k - 1)] * idz2;
+          double diag      = aE + aW + aN + aS + aT + aB;
+          double lambda    = Lambda[IDX(i, j, k)];
 
-          list->index[at]   = IDX(i, j, k);
-          list->ic[at]      = i / 2;
-          list->jc[at]      = j;
-          list->kc[at]      = k;
-          list->color[at]   = (unsigned char)color;
-          list->solid[at]   = (lambda == 0.0);
-          list->aE[at]      = aE;
-          list->aW[at]      = aW;
-          list->aN[at]      = aN;
-          list->aS[at]      = aS;
-          list->aT[at]      = aT;
-          list->aB[at]      = aB;
-          list->lambda[at]  = lambda;
+          list->index[at]  = IDX(i, j, k);
+          list->ic[at]     = i / 2;
+          list->jc[at]     = j;
+          list->kc[at]     = k;
+          list->color[at]  = (unsigned char)color;
+          list->solid[at]  = (lambda == 0.0);
+          list->aE[at]     = aE;
+          list->aW[at]     = aW;
+          list->aN[at]     = aN;
+          list->aS[at]     = aS;
+          list->aT[at]     = aT;
+          list->aB[at]     = aB;
+          list->lambda[at] = lambda;
           /* A solid cell has no open face, so it has no diagonal to invert; it
            * is an identity row and is simply held at zero. A fluid cell with no
            * open face would be a sealed pocket, which the connectivity check
