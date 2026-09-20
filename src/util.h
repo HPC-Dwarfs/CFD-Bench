@@ -33,4 +33,16 @@
 #define RHS(i, j, k)                                                                     \
   rhs[((k) * (imaxLocal + 2) * (jmaxLocal + 2)) + ((j) * (imaxLocal + 2)) + (i)]
 
+/* Obstacle geometry, co-located with the staggered unknowns. AX(i,j,k) is the
+ * aperture of the face between (i,j,k) and (i+1,j,k), so it sits with U; LAM is
+ * the cell volume fraction and sits with P. 0 is solid, 1 is fluid. */
+#define AX(i, j, k)                                                                      \
+  Ax[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
+#define AY(i, j, k)                                                                      \
+  Ay[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
+#define AZ(i, j, k)                                                                      \
+  Az[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
+#define LAM(i, j, k)                                                                     \
+  Lambda[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
+
 #endif // __UTIL_H_

@@ -35,7 +35,7 @@
 *.i*86
 *.x86_64
 *.hex
-NusifSolver-*
+CFD-Solver-*
 
 # Debug files
 *.dSYM/
@@ -59,3 +59,25 @@ dkms.conf
 .clangd
 /compile_commands.json
 /config.mk
+
+# Build output
+/build/
+
+# Built tools
+/tools/fieldcmp
+
+# Run output
+*.vtk
+/residual.dat
+profile-*.txt
+
+# Recorded test baselines: a local artifact, regenerate with tests/record-baseline.sh
+tests/baseline/*.dump
+
+# Generated test geometry: regenerate with tests/make-geom.sh
+tests/geom/*.vox
+
+# Generated benchmark geometry: regenerate with tools/make-geometry.sh
+geometry/*.vox
+/forces.dat
+/vis_files/

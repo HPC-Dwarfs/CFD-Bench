@@ -7,7 +7,12 @@
 
 name canal             # name of flow setup
 
-bcLeft    3			#  flags for boundary conditions
+# The inlet prescribes the velocity below, so the pressure there takes a zero
+# normal pressure gradient (1) rather than being pinned (3). Pinning it at a
+# boundary whose normal velocity is already prescribed over-determines the
+# pressure problem, and the projection then cannot make the field
+# divergence-free at the inlet.
+bcLeft    1			#  flags for boundary conditions
 bcRight   3			#  1 = no-slip      3 = outflow
 bcBottom  1			#  2 = free-slip    4 = periodic
 bcTop     1			#
@@ -45,14 +50,14 @@ tau      0.5     # safety factor for time stepsize control (<0 constant delt)
 # Multigrid data:
 # ---------
 
-levels        1         # Multigrid levels (should be >= 1)
-presmooth     50        # Pre-smoothning iterations
+levels        3         # Multigrid levels (should be >= 1)
+presmooth     5         # Pre-smoothning iterations
 postsmooth    5         # Post-smoothning iterations
 
 # Pressure Iteration Data:
 # -----------------------
 
-itermax       500       # maximal number of pressure iteration in one time step
+itermax       50000      # maximal number of pressure iteration in one time step
 eps           0.0001   # stopping tolerance for pressure iteration
 omg           1.8       # relaxation parameter for SOR iteration
 gamma         0.9       # upwind differencing factor gamma

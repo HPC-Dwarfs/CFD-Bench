@@ -10,8 +10,13 @@
 #include "allocate.h"
 #include "comm.h"
 #include "discretization.h"
+#include "geometry.h"
+#include "geometry-voxel.h"
 #include "parameter.h"
+#include "pressure-bc.h"
 #include "util.h"
+
+static void zeroVelocityOnClosedFaces(Discretization *s);
 
 static void printConfig(Discretization *s)
 {
@@ -48,13 +53,21 @@ static void printConfig(Discretization *s)
 
 void initDiscretization(Discretization *s, Parameter *params)
 {
-  s->problem      = params->name;
-  s->bcLeft       = params->bcLeft;
-  s->bcRight      = params->bcRight;
-  s->bcBottom     = params->bcBottom;
-  s->bcTop        = params->bcTop;
-  s->bcFront      = params->bcFront;
-  s->bcBack       = params->bcBack;
+  s->problem  = params->name;
+  s->bcLeft   = params->bcLeft;
+  s->bcRight  = params->bcRight;
+  s->bcBottom = params->bcBottom;
+  s->bcTop    = params->bcTop;
+  s->bcFront  = params->bcFront;
+  s->bcBack   = params->bcBack;
+
+  pressureBcInit(&s->pressureBc,
+      params->bcLeft,
+      params->bcRight,
+      params->bcBottom,
+      params->bcTop,
+      params->bcFront,
+      params->bcBack);
 
   s->grid.imax    = params->imax;
   s->grid.jmax    = params->jmax;
@@ -92,6 +105,10 @@ void initDiscretization(Discretization *s, Parameter *params)
   s->f          = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
   s->g          = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
   s->h          = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Ax         = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Ay         = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Az         = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
+  s->Lambda     = allocate(ARRAY_ALIGNMENT, size * sizeof(double));
 
   for (int i = 0; i < size; i++) {
     s->u[i]   = params->u_init;
@@ -102,6 +119,12 @@ void initDiscretization(Discretization *s, Parameter *params)
     s->f[i]   = 0.0;
     s->g[i]   = 0.0;
     s->h[i]   = 0.0;
+    /* Obstacle-free until a producer says otherwise, halo included, so that no
+     * exchange is needed to make the geometry consistent. */
+    s->Ax[i]     = 1.0;
+    s->Ay[i]     = 1.0;
+    s->Az[i]     = 1.0;
+    s->Lambda[i] = 1.0;
   }
 
   double dx        = s->grid.dx;
@@ -110,6 +133,85 @@ void initDiscretization(Discretization *s, Parameter *params)
 
   double invSqrSum = 1.0 / (dx * dx) + 1.0 / (dy * dy) + 1.0 / (dz * dz);
   s->dtBound       = 0.5 * s->re * 1.0 / invSqrSum;
+
+  /* Obstacle geometry. Everything downstream sees only the four aperture
+   * arrays; this is the only place the spec and the file are looked at. */
+  GeometrySpecType spec;
+  geometryParseSpec(&spec, params->geometryFile);
+
+  int offsets[NDIMS] = { 0, 0, 0 };
+  commGetOffsets(&s->comm, offsets, params->kmax, params->jmax, params->imax);
+  s->iOffset                = offsets[IDIM];
+  s->jOffset                = offsets[JDIM];
+  s->kOffset                = offsets[KDIM];
+
+  GeometryDomainType domain = { .imaxLocal = imaxLocal,
+    .jmaxLocal                             = jmaxLocal,
+    .kmaxLocal                             = kmaxLocal,
+    .iOffset                               = offsets[IDIM],
+    .jOffset                               = offsets[JDIM],
+    .kOffset                               = offsets[KDIM],
+    .imax                                  = params->imax,
+    .jmax                                  = params->jmax,
+    .kmax                                  = params->kmax,
+    .dx                                    = dx,
+    .dy                                    = dy,
+    .dz                                    = dz,
+    .xlength                               = params->xlength,
+    .ylength                               = params->ylength,
+    .zlength                               = params->zlength };
+
+  if (spec.kind == GEOMETRY_VOXEL) {
+    geometryVoxelLoad(spec.file, &domain);
+  }
+
+  geometryProduce(&spec, &domain, s->Ax, s->Ay, s->Az, s->Lambda);
+
+  if (spec.kind != GEOMETRY_NONE) {
+    geometryValidateConnectivity(&s->comm, &domain, s->Ax, s->Ay, s->Az, s->Lambda, 1);
+  }
+
+  if (commIsMaster(&s->comm)) {
+    geometryPrintHeader(&spec, &domain);
+  }
+
+  /* The initial condition filled every cell and face alike, so the obstacle has
+   * to be imposed on it before the first step. A solid cell carries an identity
+   * row with a zero right-hand side, whose solution is zero, and the relaxation
+   * only leaves it there if it starts there. */
+  zeroVelocityOnClosedFaces(s);
+
+  for (int k = 0; k < kmaxLocal + 2; k++) {
+    for (int j = 0; j < jmaxLocal + 2; j++) {
+      for (int i = 0; i < imaxLocal + 2; i++) {
+        size_t idx = (size_t)k * (imaxLocal + 2) * (jmaxLocal + 2) +
+                     (size_t)j * (imaxLocal + 2) + (size_t)i;
+        if (s->Lambda[idx] == 0.0) {
+          s->p[idx] = 0.0;
+        }
+      }
+    }
+  }
+
+  /* Counted once, here, because the geometry does not move. */
+  {
+    double fluid = 0.0;
+
+    for (int k = 1; k < kmaxLocal + 1; k++) {
+      for (int j = 1; j < jmaxLocal + 1; j++) {
+        for (int i = 1; i < imaxLocal + 1; i++) {
+          size_t idx = (size_t)k * (imaxLocal + 2) * (jmaxLocal + 2) +
+                       (size_t)j * (imaxLocal + 2) + (size_t)i;
+          if (s->Lambda[idx] > 0.0) {
+            fluid += 1.0;
+          }
+        }
+      }
+    }
+
+    commReduceAll(&fluid, SUM);
+    s->fluidCells = (fluid > 0.0) ? fluid : 1.0;
+  }
 
 #ifdef VERBOSE
   printConfig(s);
@@ -333,29 +435,41 @@ void setBoundaryConditions(Discretization *s)
 
 void computeRHS(Discretization *s)
 {
-  int imaxLocal = s->comm.imaxLocal;
-  int jmaxLocal = s->comm.jmaxLocal;
-  int kmaxLocal = s->comm.kmaxLocal;
+  int imaxLocal        = s->comm.imaxLocal;
+  int jmaxLocal        = s->comm.jmaxLocal;
+  int kmaxLocal        = s->comm.kmaxLocal;
 
-  double idx    = 1.0 / s->grid.dx;
-  double idy    = 1.0 / s->grid.dy;
-  double idz    = 1.0 / s->grid.dz;
-  double idt    = 1.0 / s->dt;
+  double idx           = 1.0 / s->grid.dx;
+  double idy           = 1.0 / s->grid.dy;
+  double idz           = 1.0 / s->grid.dz;
+  double idt           = 1.0 / s->dt;
 
-  double *rhs   = s->rhs;
-  double *f     = s->f;
-  double *g     = s->g;
-  double *h     = s->h;
+  double *rhs          = s->rhs;
+  const double *Lambda = s->Lambda;
+  double *f            = s->f;
+  double *g            = s->g;
+  double *h            = s->h;
 
   commShift(&s->comm, f, g, h);
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
+        /* F, G and H are already zero on closed faces, so this divergence is
+         * aperture-weighted without mentioning an aperture. */
         RHS(i, j, k) =
             ((F(i, j, k) - F(i - 1, j, k)) * idx + (G(i, j, k) - G(i, j - 1, k)) * idy +
                 (H(i, j, k) - H(i, j, k - 1)) * idz) *
             idt;
+
+        /* A solid cell carries an identity row, whose right-hand side is zero.
+         * Written as a separate store rather than as a factor of Lambda so that
+         * the arithmetic above is untouched for a fluid cell -- multiplying by
+         * an exact 1.0 is exact, but it lets -ffast-math reassociate the
+         * expression, which moves the last bit of an obstacle-free result. */
+        if (LAM(i, j, k) == 0.0) {
+          RHS(i, j, k) = 0.0;
+        }
       }
     }
   }
@@ -385,6 +499,33 @@ void setSpecialBoundaryCondition(Discretization *s)
         }
       }
     }
+  } else if (strcmp(s->problem, "schaefer-turek") == 0) {
+    /*
+     * The inflow the benchmark specifies:
+     *
+     *   u(y, z) = 16 Um y z (H - y) (H - z) / H^4
+     *
+     * whose peak is Um and whose mean over the square inlet is 4 Um / 9. The
+     * published cases fix the mean, so Um is 9/4 of it. Anything else makes the
+     * Reynolds number -- and with it the drag the benchmark is about --
+     * something other than what the reference values describe.
+     */
+    if (commIsBoundary(&s->comm, LEFT)) {
+      double height = s->grid.ylength;
+      double depth  = s->grid.zlength;
+      double um     = 2.25;
+
+      for (int k = 1; k < kmaxLocal + 1; k++) {
+        double z = ((k - 1 + s->kOffset) + 0.5) * s->grid.dz;
+
+        for (int j = 1; j < jmaxLocal + 1; j++) {
+          double y   = ((j - 1 + s->jOffset) + 0.5) * s->grid.dy;
+
+          U(0, j, k) = 16.0 * um * y * z * (height - y) * (depth - z) /
+                       (height * height * depth * depth);
+        }
+      }
+    }
   }
 }
 
@@ -400,32 +541,69 @@ static double maxElement(Discretization *s, double *m)
   return maxval;
 }
 
-void normalizePressure(Discretization *s)
+/* Subtract the mean of a field over the fluid cells, in place, leaving the
+ * solid cells alone. */
+static void removeMean(Discretization *s, double *field)
 {
   int imaxLocal = s->comm.imaxLocal;
   int jmaxLocal = s->comm.jmaxLocal;
   int kmaxLocal = s->comm.kmaxLocal;
 
-  double *p     = s->p;
-  double avgP   = 0.0;
+  const double *Lambda = s->Lambda;
+  double *p            = field;
+  double mean          = 0.0;
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        avgP += P(i, j, k);
+        if (LAM(i, j, k) == 0.0) {
+          continue;
+        }
+        mean += P(i, j, k);
       }
     }
   }
-  commReduceAll(&avgP, SUM);
-  avgP /= (s->grid.imax * s->grid.jmax * s->grid.kmax);
+  commReduceAll(&mean, SUM);
+  mean /= s->fluidCells;
 
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        P(i, j, k) = P(i, j, k) - avgP;
+        /* A solid cell is an identity row with a zero right-hand side, and the
+         * null vector is zero there. Shifting it would leave every solid cell
+         * holding -mean, which a relaxation sweep quietly repairs on its next
+         * cut-cell pass and a Krylov iteration does not. */
+        if (LAM(i, j, k) == 0.0) {
+          continue;
+        }
+        P(i, j, k) = P(i, j, k) - mean;
       }
     }
   }
+}
+
+/*
+ * Handle the pressure null space, where there is one.
+ *
+ * Where every boundary imposes a zero normal pressure gradient the operator is
+ * singular: constants are in its null space, the right-hand side has to lie in
+ * its range for a solution to exist at all, and the iterate is free to drift.
+ * Both halves are dealt with here -- the right-hand side is projected onto the
+ * range by removing its mean, and the constant is removed from the pressure.
+ *
+ * Where a boundary pins the pressure the operator is non-singular and neither
+ * is appropriate, so nothing is done. This used to run unconditionally every
+ * hundredth step, which both failed to keep a singular setup from drifting
+ * between those steps and perturbed a non-singular one that did not need it.
+ */
+void normalizePressure(Discretization *s)
+{
+  if (!pressureBcIsSingular(&s->pressureBc)) {
+    return;
+  }
+
+  removeMean(s, s->rhs);
+  removeMean(s, s->p);
 }
 
 void computeTimestep(Discretization *s)
@@ -649,6 +827,76 @@ void computeFG(Discretization *s)
       }
     }
   }
+
+  /*
+   * No-slip at the obstacle, taken from the face apertures.
+   *
+   * A closed face carries no velocity unknown, so it carries no momentum
+   * either. Zeroing F, G and H there is what makes the obstacle visible to the
+   * right-hand side: the divergence assembled from them is then already
+   * aperture-weighted, because a closed face contributes nothing to it.
+   *
+   * The stencils above read velocities that lie on closed faces, which are held
+   * at zero, so the body is seen as a no-slip wall to the accuracy of the
+   * scheme. That accuracy is first order at the surface, which is what binary
+   * apertures imply and what a later fractional-aperture phase improves.
+   */
+  const double *Ax = s->Ax;
+  const double *Ay = s->Ay;
+  const double *Az = s->Az;
+
+  for (int k = 0; k < kmaxLocal + 2; k++) {
+    for (int j = 0; j < jmaxLocal + 2; j++) {
+      for (int i = 0; i < imaxLocal + 2; i++) {
+        if (AX(i, j, k) == 0.0) {
+          F(i, j, k) = 0.0;
+        }
+        if (AY(i, j, k) == 0.0) {
+          G(i, j, k) = 0.0;
+        }
+        if (AZ(i, j, k) == 0.0) {
+          H(i, j, k) = 0.0;
+        }
+      }
+    }
+  }
+}
+
+/*
+ * Hold every velocity that lies on a closed face at zero.
+ *
+ * adaptUV never updates such a face, so this only has to be done once, but it
+ * has to be done before the first predictor runs: the initial condition fills
+ * the whole field with u_init, which for a channel setup is not zero.
+ */
+static void zeroVelocityOnClosedFaces(Discretization *s)
+{
+  int imaxLocal    = s->comm.imaxLocal;
+  int jmaxLocal    = s->comm.jmaxLocal;
+  int kmaxLocal    = s->comm.kmaxLocal;
+
+  double *u        = s->u;
+  double *v        = s->v;
+  double *w        = s->w;
+  const double *Ax = s->Ax;
+  const double *Ay = s->Ay;
+  const double *Az = s->Az;
+
+  for (int k = 0; k < kmaxLocal + 2; k++) {
+    for (int j = 0; j < jmaxLocal + 2; j++) {
+      for (int i = 0; i < imaxLocal + 2; i++) {
+        if (AX(i, j, k) == 0.0) {
+          U(i, j, k) = 0.0;
+        }
+        if (AY(i, j, k) == 0.0) {
+          V(i, j, k) = 0.0;
+        }
+        if (AZ(i, j, k) == 0.0) {
+          W(i, j, k) = 0.0;
+        }
+      }
+    }
+  }
 }
 
 void adaptUV(Discretization *s)
@@ -669,12 +917,28 @@ void adaptUV(Discretization *s)
   double factorY = s->dt / s->grid.dy;
   double factorZ = s->dt / s->grid.dz;
 
+  /*
+   * No pressure gradient is applied across a closed face, so the pressure
+   * inside a body -- which the identity rows hold at zero, but which nothing
+   * stops a caller from perturbing -- cannot reach the fluid.
+   *
+   * Written as a factor rather than as a branch. An aperture is 0 or 1, so the
+   * open case is bit-for-bit the update this always did, while the closed case
+   * gives the zero a velocity on a closed face is required to have. A branch
+   * here would say the same thing, but it stops the compiler contracting the
+   * expression the way it does without one, which moves the last bit of every
+   * obstacle-free result.
+   */
+  const double *Ax = s->Ax;
+  const double *Ay = s->Ay;
+  const double *Az = s->Az;
+
   for (int k = 1; k < kmaxLocal + 1; k++) {
     for (int j = 1; j < jmaxLocal + 1; j++) {
       for (int i = 1; i < imaxLocal + 1; i++) {
-        U(i, j, k) = F(i, j, k) - (P(i + 1, j, k) - P(i, j, k)) * factorX;
-        V(i, j, k) = G(i, j, k) - (P(i, j + 1, k) - P(i, j, k)) * factorY;
-        W(i, j, k) = H(i, j, k) - (P(i, j, k + 1) - P(i, j, k)) * factorZ;
+        U(i, j, k) = AX(i, j, k) * (F(i, j, k) - (P(i + 1, j, k) - P(i, j, k)) * factorX);
+        V(i, j, k) = AY(i, j, k) * (G(i, j, k) - (P(i, j + 1, k) - P(i, j, k)) * factorY);
+        W(i, j, k) = AZ(i, j, k) * (H(i, j, k) - (P(i, j, k + 1) - P(i, j, k)) * factorZ);
       }
     }
   }

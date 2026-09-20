@@ -1,0 +1,86 @@
+#==============================================================================
+#            Schaefer-Turek 3D cylinder benchmark, case 3D-2Z
+#
+#   The published unsteady case: a channel 2.5 x 0.41 x 0.41 with a cylinder of
+#   diameter 0.1 spanning the full z extent, its axis at (0.5, 0.2), and a
+#   parabolic inlet whose mean velocity is 1.0. With a kinematic viscosity of
+#   1e-3 -- which is what re = 1000 means here, since the solver multiplies the
+#   viscous term by 1/re in the domain's own units -- the Reynolds number formed
+#   on the cylinder diameter is 100.
+#
+#   The geometry is the analytic cylinder rather than a voxel volume on purpose:
+#   a rasterized body is only as accurate as its voxel size, and that would cap
+#   the very quantity this benchmark measures.
+#
+#   The inlet prescribes the velocity, so the pressure there takes a zero normal
+#   gradient (bcLeft 1) and only the outlet pins it. Labelling the inlet an
+#   outflow would pin the pressure at both ends of a channel whose inflow is
+#   already prescribed, which over-determines the pressure problem.
+#==============================================================================
+
+# Problem specific Data:
+# ---------------------
+
+name schaefer-turek    # selects the parabolic inflow
+
+bcLeft    1			#  prescribed inflow, so a zero normal pressure gradient
+bcRight   3			#  outflow, which pins the pressure
+bcBottom  1			#  1 = no-slip      3 = outflow
+bcTop     1			#  2 = free-slip    4 = periodic
+bcFront   1			#
+bcBack    1			#
+
+gx     0.0      # Body forces (e.g. gravity)
+gy     0.0      #
+gz     0.0      #
+
+re            1000.0   # 1 / kinematic viscosity, giving nu = 1e-3
+
+u_init        0.0      # initial value for velocity in x-direction
+v_init        0.0      # initial value for velocity in y-direction
+w_init        0.0      # initial value for velocity in z-direction
+p_init        0.0      # initial value for pressure
+
+# Geometry Data:
+# -------------
+
+xlength       2.5      # domain size in x-direction
+ylength       0.41	   # domain size in y-direction
+zlength       0.41	   # domain size in z-direction
+imax          256      # number of interior cells in x-direction
+jmax          48	   # number of interior cells in y-direction
+kmax          48	   # number of interior cells in z-direction
+
+# Obstacle Geometry Data:
+# -----------------------
+# Diameter 0.1 at (0.5, 0.2), spanning z. About ten cells across, which is what
+# the two-dimensional change found is too few for the wake to shed.
+
+geometryFile  cylinder-z:0.5,0.2,0.05
+
+# Time Data:
+# ---------
+
+te       8.0    # final time
+dt       0.005  # time stepsize
+tau      0.5    # safety factor for time stepsize control (<0 constant delt)
+
+# Multigrid data:
+# ---------
+
+# Three levels, not four: the cylinder is ten cells across on the finest grid,
+# so at the fourth level it would be under two coarse cells and would round
+# away. The solver reports that rather than hiding it, but a hierarchy whose
+# coarsest level cannot see the body is not worth building.
+levels        3         # Multigrid levels (should be >= 1)
+presmooth     5         # Pre-smoothning iterations
+postsmooth    5         # Post-smoothning iterations
+
+# Pressure Iteration Data:
+# -----------------------
+
+itermax       50000     # maximal number of pressure iteration in one time step
+eps           0.0001    # stopping tolerance for pressure iteration
+omg           1.8       # relaxation parameter for SOR iteration
+gamma         0.9       # upwind differencing factor gamma
+#===============================================================================

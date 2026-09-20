@@ -8,6 +8,7 @@
 #include "comm.h"
 #include "grid.h"
 #include "parameter.h"
+#include "pressure-bc.h"
 
 enum BC { NOSLIP = 1, SLIP, OUTFLOW, PERIODIC };
 
@@ -18,6 +19,18 @@ typedef struct {
   double *p, *rhs;
   double *f, *g, *h;
   double *u, *v, *w;
+  /* Obstacle geometry, as the rest of the solver sees it. Ax, Ay and Az are
+   * face apertures co-located with u, v and w; Lambda is the cell volume
+   * fraction, co-located with p. 0 is fully solid, 1 fully fluid. These four
+   * arrays are the only channel between geometry and everything else -- nothing
+   * downstream reads a file, a shape or a cell type. */
+  double *Ax, *Ay, *Az, *Lambda;
+  /* Global count of cells with a nonzero volume fraction. The null-space
+   * projection averages over these and no others: the operator's null vector is
+   * the constant over the fluid and zero over the solid, so a mean taken over
+   * every cell removes the wrong quantity and leaves the solid cells holding
+   * it. Solver keeps the same count under the same name for residual norms. */
+  double fluidCells;
   /* parameters */
   double eps, omega;
   double re, tau, gamma;
@@ -28,6 +41,12 @@ typedef struct {
   double dtBound;
   char *problem;
   int bcLeft, bcRight, bcBottom, bcTop, bcFront, bcBack;
+  /* global index of this rank's first interior cell, so a setup-specific
+   * boundary condition can be written as a function of position */
+  int iOffset, jOffset, kOffset;
+  /* the same boundary configuration the solvers use, so that the null-space
+   * handling and the solvers agree on whether the operator is singular */
+  PressureBcType pressureBc;
   CommType comm;
 } Discretization;
 

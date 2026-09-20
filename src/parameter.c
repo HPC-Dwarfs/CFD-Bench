@@ -12,21 +12,30 @@
 
 void initParameter(Parameter *param)
 {
-  param->xlength    = 1.0;
-  param->ylength    = 1.0;
-  param->zlength    = 1.0;
-  param->imax       = 100;
-  param->jmax       = 100;
-  param->kmax       = 100;
-  param->itermax    = 1000;
-  param->eps        = 0.0001;
-  param->omg        = 1.7;
-  param->re         = 100.0;
-  param->gamma      = 0.9;
-  param->tau        = 0.5;
-  param->levels     = 5;
-  param->presmooth  = 5;
-  param->postsmooth = 5;
+  param->xlength           = 1.0;
+  param->ylength           = 1.0;
+  param->zlength           = 1.0;
+  param->imax              = 100;
+  param->jmax              = 100;
+  param->kmax              = 100;
+  param->itermax           = 1000;
+  param->eps               = 0.0001;
+  param->omg               = 1.7;
+  param->re                = 100.0;
+  param->gamma             = 0.9;
+  param->tau               = 0.5;
+  param->levels            = 5;
+  param->presmooth         = 5;
+  param->postsmooth        = 5;
+  param->geometryFile      = NULL;
+  param->precon            = "jacobi";
+  param->smoothOmega       = 1.3;
+  param->numberOfParticles = 0;
+  param->startTime         = 0.0;
+  param->injectTimePeriod  = 0.0;
+  param->writeTimePeriod   = 0.0;
+  param->x1 = param->y1 = param->z1 = 0.0;
+  param->x2 = param->y2 = param->z2 = 0.0;
 }
 
 void readParameter(Parameter *param, const char *filename)
@@ -48,10 +57,17 @@ void readParameter(Parameter *param, const char *filename)
 
     for (i = 0; line[i] != '\0' && line[i] != '#'; i++)
       ;
-    line[i]   = '\0';
+    line[i] = '\0';
 
-    char *tok = strtok(line, " ");
-    char *val = strtok(NULL, " ");
+    /* Split on any whitespace, not on spaces alone, and trim what is left.
+     * A value used to keep whatever trailing whitespace the line carried, so a
+     * line such as "name dcavity" with no trailing comment produced the string
+     * "dcavity\n". Every setup-specific boundary condition is selected by
+     * strcmp on that name, so it silently did nothing -- the shipped setups
+     * only worked because each happened to have a trailing comment for the
+     * '#' strip above to remove. */
+    char *tok = strtok(line, " \t\n\r\f\v");
+    char *val = strtok(NULL, " \t\n\r\f\v");
 
 #define PARSE_PARAM(p, f)                                                                \
   if (strncmp(tok, #p, sizeof(#p) / sizeof(#p[0]) - 1) == 0) {                           \
@@ -71,7 +87,9 @@ void readParameter(Parameter *param, const char *filename)
       PARSE_INT(itermax);
       PARSE_INT(levels);
       PARSE_INT(presmooth);
+      PARSE_STRING(precon);
       PARSE_INT(postsmooth);
+      PARSE_REAL(smoothOmega);
       PARSE_REAL(eps);
       PARSE_REAL(omg);
       PARSE_REAL(re);
@@ -83,6 +101,7 @@ void readParameter(Parameter *param, const char *filename)
       PARSE_REAL(gy);
       PARSE_REAL(gz);
       PARSE_STRING(name);
+      PARSE_STRING(geometryFile);
       PARSE_INT(bcLeft);
       PARSE_INT(bcRight);
       PARSE_INT(bcBottom);
@@ -93,6 +112,16 @@ void readParameter(Parameter *param, const char *filename)
       PARSE_REAL(v_init);
       PARSE_REAL(w_init);
       PARSE_REAL(p_init);
+      PARSE_INT(numberOfParticles);
+      PARSE_REAL(startTime);
+      PARSE_REAL(injectTimePeriod);
+      PARSE_REAL(writeTimePeriod);
+      PARSE_REAL(x1);
+      PARSE_REAL(y1);
+      PARSE_REAL(z1);
+      PARSE_REAL(x2);
+      PARSE_REAL(y2);
+      PARSE_REAL(z2);
     }
   }
 
@@ -130,4 +159,6 @@ void printParameter(Parameter *param)
   printf("\tepsilon (stopping tolerance) : %f\n", param->eps);
   printf("\tgamma (stopping tolerance) : %f\n", param->gamma);
   printf("\tomega (SOR relaxation): %f\n", param->omg);
+  printf("\tomega (multigrid smoothing): %f\n", param->smoothOmega);
+  printf("\tpreconditioner (CG): %s\n", param->precon ? param->precon : "none");
 }

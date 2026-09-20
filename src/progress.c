@@ -4,17 +4,24 @@
  * license that can be found in the LICENSE file. */
 #include "progress.h"
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static double _end;
 static int _current;
+static bool _isMaster;
 
-void initProgress(double end)
+void initProgress(CommType *c, double end)
 {
-  _end     = end;
-  _current = 0;
+  _end      = end;
+  _current  = 0;
+  _isMaster = commIsMaster(c);
+
+  if (!_isMaster) {
+    return;
+  }
 
   printf("[          ]");
   fflush(stdout);
@@ -22,6 +29,10 @@ void initProgress(double end)
 
 void printProgress(double current)
 {
+  if (!_isMaster) {
+    return;
+  }
+
   int new = (int)rint((current / _end) * 10.0);
 
   if (new > _current) {
@@ -43,6 +54,10 @@ void printProgress(double current)
 
 void stopProgress()
 {
+  if (!_isMaster) {
+    return;
+  }
+
   printf("\n");
   fflush(stdout);
 }

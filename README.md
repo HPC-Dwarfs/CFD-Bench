@@ -32,6 +32,81 @@ the Donor cell differencing scheme is used for convective terms.
 - Red-Black SOR
 - Compressed Red-Black SOR
 - Geometric Multigrid
+- Preconditioned Conjugate Gradient
+
+All four solve the same system, including when the domain contains an
+obstacle, and agree to the solve tolerance. Select one at build time with
+`SOLVER=` (see [Configure](#1-configure)); the binary carries exactly one.
+
+The conjugate gradient variant applies the pressure operator matrix-free once
+per iteration, in the same two passes the relaxation sweeps use: a bulk pass
+that reads no geometry at all, then a correction confined to the cells the
+obstacle cuts. Its inner products, its preconditioner and its null-space
+projection are all restricted to the fluid unknowns, and solid cells hold
+exactly zero at every iteration rather than only at convergence.
+
+It is the one solver that costs global communication per iteration: two
+all-reductions, one for the direction's energy and one fusing the residual norm
+with the preconditioned inner product. The relaxation solvers have a single
+reduction, and only for their stopping test. That difference is real and is part
+of what a Krylov solver is; it is measured in its own profiler regions
+(`CG_DOT`, `CG_AXPY`, `PRECON`) rather than lumped into the sweep.
+
+The preconditioner is chosen with a `precon` line in the parameter file:
+
+| `precon` | meaning                                                          |
+|----------|------------------------------------------------------------------|
+| `jacobi` | the operator's diagonal, the default. Built from each cell's open faces, so it needs no stored field and reads no geometry array. |
+| `mg`     | one multigrid V-cycle from a zero guess. Much the fastest, and the only one whose iteration count does not decay as the grid is refined. |
+| `none`   | no preconditioning, for comparison.                              |
+
+An unrecognised value is refused at initialization rather than falling back to a
+default.
+
+Diagonal preconditioning does not fix the Poisson condition number, so its
+iteration count grows with resolution. The multigrid preconditioner does fix it.
+Doubling the grid in every direction on the Poisson problem the checks use takes
+the diagonally preconditioned solve from 133 iterations to 263, and the
+multigrid preconditioned one from 10 to 11. On `sphere-baseline`, `SOLVER=cg`
+with `precon mg` converges in 5 iterations against 117 with `jacobi`, and runs
+the whole setup in 0.12 s against 0.39 s for `jacobi` and 0.53 s for
+`SOLVER=mg`.
+
+### Multigrid smoothing
+
+The multigrid cycle is symmetric: its post-smoother sweeps the two colours in
+the reverse order of the pre-smoother, its coarsest level is relaxed equally in
+both directions, and its restriction is a scalar multiple of the transpose of
+its prolongation. That is what lets it precondition a Krylov method -- an
+asymmetric preconditioner makes conjugate gradients something other than
+conjugate gradients -- and it is checked directly rather than argued, by
+comparing `x` applied to one cycle of `y` against `y` applied to one cycle of
+`x`.
+
+Two consequences for setups:
+
+- **`presmooth` and `postsmooth` must be equal.** The post-smoother is the
+  transpose of the pre-smoother, and a transpose runs the same number of sweeps.
+  Unequal values are refused at initialization rather than quietly reconciled.
+- **`smoothOmega` is the smoother's relaxation factor, and is not `omg`.** `omg`
+  is the optimum for SOR as a solver; as a smoother a factor that large
+  amplifies the high-frequency modes a smoother exists to damp, and with the
+  symmetric cycle it diverges outright. The default is 1.3, the fastest value
+  measured that both converges and leaves the converged field inside the
+  cross-solver agreement gate. Lower is safer and slower.
+
+Making the cycle correct and symmetric costs `SOLVER=mg` roughly twice the
+cycles it used to take. Part of that is the smoothing factor, and part is that
+the previous cycle was faster partly by accident -- it applied the coarse
+correction twice on every level below the finest. The trade buys a cycle that
+can precondition CG, which is where the speed now is.
+
+### Obstacles
+
+The domain may contain an embedded body. Geometry is carried by face apertures
+co-located with the velocities and a volume fraction co-located with the
+pressure, so the momentum predictor, the velocity correction and the pressure
+operator all see the same body. See [Obstacle geometry](#obstacle-geometry).
 
 ## Build
 
@@ -45,7 +120,7 @@ TOOLCHAIN ?= GCC
 # Supported: true, false
 ENABLE_MPI ?= true
 ENABLE_OPENMP ?= false
-# Supported: rb, rbc, mg
+# Supported: rb, rbc, mg, cg
 SOLVER ?= rb
 # Supported: seq, mpi
 VTK_OUTPUT_FMT ?= seq
@@ -69,7 +144,7 @@ make
 
 Multiple tool chains can coexist in the same directory. Intermediate build
 results are stored in `./build/<TOOLCHAIN>/`. The executable is named
-`NusifSolver-<TOOLCHAIN>`.
+`CFD-Solver-<TOOLCHAIN>`.
 
 To see all executed commands:
 
@@ -130,16 +205,200 @@ This requires `clang-format` in your `PATH`.
 Provide a parameter file describing the problem to solve:
 
 ```sh
-./NusifSolver-CLANG dcavity.par
+./CFD-Solver-CLANG testcases/flow/dcavity.par
 ```
 
-Two example test cases are included:
+Setups live under `testcases/`, grouped by what they are for: `flow/` holds the
+physical cases below, `regression/` the shortened variants the recorded
+baselines come from, and `bench/` the scaling tiers.
 
-- `dcavity.par` — lid-driven cavity
-- `canal.par` — empty canal flow
+Five example setups are included, in `testcases/flow/`:
+
+| Setup | Flow | Geometry |
+|---|---|---|
+| `dcavity.par` | lid-driven cavity | none |
+| `canal.par` | empty canal flow | none |
+| `karman.par` | cylinder in a channel | voxel volume |
+| `backstep.par` | backward-facing step | voxel volume |
+| `schaefer-turek.par` | the published 3D cylinder benchmark, case 3D-2Z | analytic cylinder |
+
+The two setups that reference a voxel volume need it generated first:
+
+```sh
+tools/make-geometry.sh
+```
 
 To plot the pressure solver residual as a function of iteration:
 
 ```sh
 make plot
 ```
+
+## Obstacle geometry
+
+A setup places a body in the domain with a `geometryFile` entry. Without one the
+domain is obstacle-free and the solver behaves exactly as it did before
+obstacles existed.
+
+### Analytic bodies
+
+The value may name a body directly, which is not limited by any sampling
+resolution and is what the reference benchmarks use:
+
+```
+geometryFile  sphere:xc,yc,zc,r
+geometryFile  cylinder-z:xc,yc,r          # also cylinder-x and cylinder-y
+geometryFile  box:x0,y0,z0,x1,y1,z1
+geometryFile  plate-z:z,x0,y0,x1,y1       # also plate-x and plate-y
+```
+
+A plate has no volume: it closes a plane of faces and leaves the cells on both
+sides fluid. That is a body a per-cell obstacle type cannot express at all.
+
+### Voxel volumes
+
+Otherwise the value is a path to a voxel volume, the three-dimensional
+counterpart of the binary PGM the two-dimensional solver reads:
+
+```
+P5V
+# optional comment lines, anywhere in the header
+<nx> <ny> <nz>
+255
+<nx*ny*nz raw bytes, x fastest, then y, then z>
+```
+
+A voxel below 128 is solid, 128 or above is fluid. Voxel `(vx, vy, vz)` covers
+the box `[vx, vx+1) * xlength / nx` and likewise in y and z, so the index order
+matches the axis order and the origin is the domain origin. No axis is flipped.
+
+Write one with the generator:
+
+```sh
+tools/genvox.py sphere --out geometry/sphere.vox \
+    --size 256 256 256 --domain 4 4 4 --center 2 2 2 --radius 0.5
+
+tools/genvox.py cylinder --out geometry/karman.vox \
+    --size 810 216 216 --domain 30 8 8 --axis z --center 5 4 --radius 1
+
+tools/genvox.py box --out geometry/backstep.vox \
+    --size 560 120 120 --domain 7 1.5 1.5 --corner 0 0 0 --extent 1 0.5 1.5
+```
+
+The volumes the shipped setups use are generated rather than committed: at the
+required sampling density a volume is 64 bytes per grid cell, so the karman one
+is 32 MB. `tools/make-geometry.sh` rebuilds them in a few seconds.
+
+### Rules the solver enforces
+
+A volume must provide **at least 4 voxels per grid cell in every direction**.
+Below that the represented body changes as the grid is refined, which would make
+a resolution sweep measure something other than convergence. An under-resolved
+volume is refused rather than sampled.
+
+The **fluid region must be connected** under face connectivity. Each sealed
+pocket contributes an independent constant to the pressure null space, which the
+solvers do not carry, so geometry that encloses one is refused.
+
+A volume whose aspect ratio disagrees with the domain produces a warning and is
+then sampled anisotropically. A volume that cannot be opened, is not a P5V file,
+or is shorter than its header declares is refused. Every refusal happens at
+initialization, before any time step runs, and names the file and the reason.
+
+The run header records which geometry is in use, the voxel dimensions and a
+checksum of the file, so a silently edited volume cannot be mistaken for the
+reference case.
+
+## Particle tracing
+
+A setup can release massless tracer particles, so that flow around a body shows
+up as streaklines. It is off unless asked for: a setup with no particle block
+produces exactly the fields and files it would with no tracer present.
+
+```
+numberOfParticles   400     # released per batch; 0 or absent means no tracing
+startTime           20.0    # when the first batch is released
+injectTimePeriod    1.0     # between batches
+writeTimePeriod     0.5     # between output files
+
+x1  0.2                     # the seed box, one corner
+y1  0.5
+z1  0.5
+x2  0.4                     # and the other
+y2  7.5
+z2  7.5
+```
+
+Positions are written to `vis_files/particles_NNNNN.vtk` as VTK polydata, which
+opens in ParaView alongside the field output.
+
+Seed positions come from a hash of the particle's index and batch number rather
+than from a random number generator, so the same setup releases the same
+particles in every run and at every rank count, with no communication needed to
+arrange it.
+
+A particle is stopped by the **apertures of the faces its path crosses**, not by
+the volume fraction of the cell it lands in. That distinction is the point: a
+body one face thick has fluid on both sides, so a destination-cell test sees
+nothing in the way and the particle passes straight through it. Particles that
+meet a body, or leave through a domain boundary, are removed and counted; the
+run reports how many of each at the end.
+
+## Tests
+
+```sh
+tests/run-all.sh
+```
+
+This builds each solver variant in turn and runs everything: the check drivers
+at one and several ranks, the inputs the solver has to refuse, geometry against
+rank count, the solvers against an obstacle, and the recorded field baselines.
+
+The pieces can also be run on their own:
+
+| Command | What it covers |
+|---|---|
+| `tests/run-checks.sh [-n RANKS]` | the check drivers in `tests/checks/` |
+| `tests/check-setups.sh` | every shipped setup starts and its body reaches the flow |
+| `tests/check-rejects.sh` | inputs that must be refused |
+| `tests/check-geometry-ranks.sh` | apertures are identical whatever the rank count |
+| `tests/check-solver-obstacle.sh` | the three solvers agree with a body present |
+| `tests/check-schaefer-turek.sh` | drag, lift and Strouhal against their published ranges |
+| `tests/check-particles.sh` | particle output, and that it does not depend on the rank count |
+| `tests/record-baseline.sh [-v]` | record or verify the field baselines |
+
+Baselines and test geometry are generated, not committed; `record-baseline.sh`
+and `tests/make-geom.sh` rebuild them.
+
+The check drivers link against the solver objects, so they need the test build:
+
+```sh
+make tests
+```
+
+which also produces `CFD-Solver-<TOOLCHAIN>-test`, a solver that writes a raw
+dump of `p`, `u`, `v` and `w` when `NUSIF_FIELD_DUMP` names a path. `tools/fieldcmp`
+compares two dumps -- `--l2` judges by the L2 difference rather than the largest
+one, which is the honest measure when two runs differ only in the order their
+global sums were formed -- and `tools/fieldprobe.py` reports statistics over a
+box of cells.
+
+### Forces on a body
+
+A run whose domain contains an obstacle writes `forces.dat`, a time series of
+the force the flow exerts on it, integrated over the closed faces that make up
+its surface. `tools/stcoeffs.py` turns that into the drag and lift coefficients
+and the Strouhal number of the Schaefer-Turek benchmark and reports each against
+its published range:
+
+```sh
+./CFD-Solver-CLANG testcases/flow/schaefer-turek.par
+tools/stcoeffs.py forces.dat
+```
+
+That check reports rather than asserts. Binary apertures give a body a staircase
+surface and a first-order wall treatment, so the drag is expected to come out
+high and a wake resolved by ten cells across the cylinder may not shed at all.
+`STRICT=1 tests/check-schaefer-turek.sh` turns the report into a pass-or-fail
+check, which is the measurement a later fractional-aperture change has to
+satisfy.

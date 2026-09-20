@@ -8,7 +8,12 @@
 
 #include "allocate.h"
 #include "discretization.h"
+#include "forces.h"
+#ifdef TEST
+#include "fielddump.h"
+#endif
 #include "parameter.h"
+#include "particletracing.h"
 #include "profiler.h"
 #include "progress.h"
 #include "solver.h"
@@ -25,7 +30,7 @@ int main(int argc, char **argv)
 
   commInit(&d.comm, argc, argv);
   initParameter(&p);
-  FILE *fp;
+  FILE *fp = NULL;
   if (commIsMaster(&d.comm)) {
     fp = initResidualWriter();
   }
@@ -46,8 +51,23 @@ int main(int argc, char **argv)
   initSolver(&s, &d, &p);
   initProfiler(&d.comm);
 
+  /* A body in the domain means the force on it is worth recording: it is what
+   * the reference benchmarks are defined in terms of, and it costs a pass over
+   * the body's surface. */
+  FILE *forceFile = NULL;
+  int haveBody    = forcesHaveBody(&d);
+
+  if (haveBody && commIsMaster(&d.comm)) {
+    forceFile = fopen("forces.dat", "w");
+    if (forceFile != NULL) {
+      fprintf(forceFile, "# time fx fy fz\n");
+    }
+  }
+
+  ParticleTracerType tracer;
+  particleTracerInit(&tracer, &d, &p);
 #ifndef VERBOSE
-  initProgress(d.te);
+  initProgress(&d.comm, d.te);
 #endif
 
   double tau = d.tau;
@@ -65,15 +85,27 @@ int main(int argc, char **argv)
     setSpecialBoundaryCondition(&d);
     computeFG(&d);
     computeRHS(&d);
-    if (nt % 100 == 0) {
-      normalizePressure(&d);
-    }
+    /* Every step, not every hundredth: where the operator is singular the
+     * right-hand side has to be made compatible before each solve, not
+     * occasionally. It is a no-op where a boundary pins the pressure. */
+    normalizePressure(&d);
     res = solve(&s, d.p, d.rhs);
     adaptUV(&d);
 
     if (commIsMaster(&d.comm)) {
       writeResidual(fp, t, res);
     }
+
+    if (haveBody) {
+      double fx, fy, fz;
+      forcesCompute(&d, &fx, &fy, &fz);
+
+      if (forceFile != NULL) {
+        fprintf(forceFile, "%.10e %.10e %.10e %.10e\n", t, fx, fy, fz);
+      }
+    }
+
+    particleTracerStep(&tracer, &d, t);
 
     t += d.dt;
     nt++;
@@ -94,6 +126,13 @@ int main(int argc, char **argv)
     printf("Solution took %.2fs\n", timeStop - timeStart);
   }
 
+#ifdef TEST
+  const char *dumpPath = fieldDumpPath();
+  if (dumpPath != NULL) {
+    fieldDumpWrite(&d.comm, s.grid, dumpPath, d.p, d.u, d.v, d.w);
+  }
+#endif
+
   timeStart = getTimeStamp();
 #ifdef _VTK_WRITER_MPI
   VtkOptions opts = { .grid = s.grid, .comm = s.comm };
@@ -102,7 +141,7 @@ int main(int argc, char **argv)
   vtkVector(&opts, "velocity", (VtkVector) { d.u, d.v, d.w });
   vtkClose(&opts);
 #else
-  if (commIsMaster(&d.comm))
+  if (fp != NULL)
     fclose(fp);
 
   double *pg;
@@ -146,6 +185,12 @@ int main(int argc, char **argv)
 
   if (commIsMaster(s.comm)) {
     printf("Result output took %.2fs\n", timeStop - timeStart);
+  }
+
+  particleTracerFinalize(&tracer, &d);
+
+  if (forceFile != NULL) {
+    fclose(forceFile);
   }
 
   finalizeProfiler();
