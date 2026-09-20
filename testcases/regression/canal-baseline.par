@@ -1,6 +1,6 @@
 #==============================================================================
 #   canal, reduced for baseline recording.
-#   Derived from ../../canal.par; see dcavity-baseline.par for the rationale.
+#   Derived from ../flow/canal.par; see dcavity-baseline.par for the rationale.
 #==============================================================================
 
 name canal

@@ -1,7 +1,7 @@
 #==============================================================================
 #   dcavity, reduced for baseline recording.
 #
-#   Derived from ../../dcavity.par. The grid is quartered in each direction and
+#   Derived from ../flow/dcavity.par. The grid is quartered in each direction and
 #   the final time shortened so that recording all three solvers takes seconds.
 #   Everything that decides behaviour -- boundary conditions, Reynolds number,
 #   omega, eps -- is unchanged, so a regression in any of them still shows up.

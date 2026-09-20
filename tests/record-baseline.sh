@@ -8,7 +8,7 @@
 #            dumps and fail when any differs
 #   -o DIR   where the dumps live (default tests/baseline)
 #
-# The setups in tests/setups/ are the shipped ones at their own resolution with
+# The setups in testcases/regression/ are the shipped ones at their own resolution with
 # a shortened final time; see the comment at the top of each. Every solver is
 # recorded because the three do not agree today and the whole point of the
 # baseline is to show what the correctness fixes change.
@@ -48,7 +48,7 @@ for solver in $SOLVERS; do
     fi
 
     for setup in $SETUPS; do
-        par="$ROOT/tests/setups/$setup-baseline.par"
+        par="$ROOT/testcases/regression/$setup-baseline.par"
         ref="$OUT/$setup-$solver.dump"
 
         if [ ! -f "$par" ]; then

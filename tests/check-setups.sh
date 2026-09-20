@@ -47,7 +47,7 @@ check_setup() {
 
     par="$WORK/$setup.par"
     # Two steps is enough to show it runs; the shipped final times are minutes.
-    sed 's/^te  *[0-9.]*/te       0.0001/' "$ROOT/$setup.par" > "$par"
+    sed 's/^te  *[0-9.]*/te       0.0001/' "$ROOT/testcases/flow/$setup.par" > "$par"
 
     printf -- '-- %s\n' "$setup"
 
@@ -109,7 +109,7 @@ check_physics() {
     printf -- '-- backstep blocks the flow through the step\n'
 
     par="$WORK/backstep-flow.par"
-    sed 's/^te  *[0-9.]*/te       0.2/' "$ROOT/backstep.par" > "$par"
+    sed 's/^te  *[0-9.]*/te       0.2/' "$ROOT/testcases/flow/backstep.par" > "$par"
 
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/backstep.dump" \
         "$BIN-test" "$par" >/dev/null 2>&1 )
@@ -130,7 +130,7 @@ check_physics() {
     printf -- '-- karman disturbs the flow behind the cylinder\n'
 
     par="$WORK/karman-flow.par"
-    sed 's/^te  *[0-9.]*/te       2.0/' "$ROOT/karman.par" > "$par"
+    sed 's/^te  *[0-9.]*/te       2.0/' "$ROOT/testcases/flow/karman.par" > "$par"
 
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/karman.dump" \
         "$BIN-test" "$par" >/dev/null 2>&1 )

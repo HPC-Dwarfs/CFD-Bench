@@ -27,7 +27,7 @@ FACTOR=${FACTOR:-3}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-PAR="$ROOT/tests/setups/sphere-baseline.par"
+PAR="$ROOT/testcases/regression/sphere-baseline.par"
 FREE="$WORK/sphere-free.par"
 
 # The same setup without the body, for the iteration-count comparison.

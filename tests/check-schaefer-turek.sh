@@ -44,7 +44,7 @@ fi
 par="$WORK/st.par"
 
 if [ "$FULL" = "1" ]; then
-    cp "$ROOT/schaefer-turek.par" "$par"
+    cp "$ROOT/testcases/flow/schaefer-turek.par" "$par"
     echo "Running the shipped setup unmodified. This takes hours."
 else
     # Half the resolution in every direction and a short final time. The
@@ -55,7 +55,7 @@ else
         -e 's/^jmax  *[0-9]*/jmax          24/' \
         -e 's/^kmax  *[0-9]*/kmax          24/' \
         -e 's/^levels  *[0-9]*/levels        2/' \
-        "$ROOT/schaefer-turek.par" > "$par"
+        "$ROOT/testcases/flow/schaefer-turek.par" > "$par"
     echo "Running a shortened, half-resolution version; set FULL=1 for the shipped setup."
 fi
 
