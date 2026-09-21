@@ -144,6 +144,36 @@ static void cycleApply(const double *rhs, double *out, size_t size)
   }
 }
 
+/*
+ * L2 of the residual at one level.
+ *
+ * residualField writes zero at a solid cell -- an identity row already
+ * satisfied by p = 0 -- so summing over the whole interior is the same as
+ * summing over the fluid.
+ */
+static double levelResidualNorm(int level, double *p, const double *rhs)
+{
+  mgTestResidualField(&Mg, level, p, rhs);
+
+  int im, jm, km;
+  mgTestLevelExtents(&Mg, level, &im, &jm, &km);
+  const double *r = mgTestLevelR(&Mg, level);
+
+  double sum = 0.0;
+
+  for (int k = 1; k < km + 1; k++) {
+    for (int j = 1; j < jm + 1; j++) {
+      for (int i = 1; i < im + 1; i++) {
+        double v = AT(r, i, j, k, im, jm);
+        sum += v * v;
+      }
+    }
+  }
+
+  commReduceAll(&sum, SUM);
+  return sqrt(sum);
+}
+
 /* Over the fluid unknowns, which is where the operator is defined. */
 static double dotFluid(const double *a, const double *b, int im, int jm, int km)
 {
@@ -570,6 +600,109 @@ int main(int argc, char **argv)
 
     free(rhs);
     free(p0);
+  }
+
+  /*
+   * The coarsest level is solved, not relaxed.
+   *
+   * The correction a cycle carries upward is only as good as the coarse problem
+   * it came from, so a coarsest level still far from its own solution limits the
+   * whole cycle however many levels sit above it. It used to get presmooth then
+   * postsmooth sweeps -- eight here, ten on the shipped setups -- which reduces
+   * that level's residual by a single-digit factor and leaves it dominating.
+   *
+   * Driven directly rather than through a whole cycle, because what is being
+   * measured is what the coarsest solve achieves on its own.
+   */
+  {
+    int last = mgTestLevels(&Mg) - 1;
+
+    int im, jm, km;
+    mgTestLevelExtents(&Mg, last, &im, &jm, &km);
+
+    double *e = mgTestLevelE(&Mg, last);
+    double *b = mgTestLevelB(&Mg, last);
+
+    size_t size = (size_t)(im + 2) * (jm + 2) * (km + 2);
+
+    for (size_t i = 0; i < size; i++) {
+      e[i] = 0.0;
+      b[i] = 0.0;
+    }
+
+    int offs[NDIMS] = { 0, 0, 0 };
+    commGetOffsets(&D.comm, offs, KMAX, JMAX, IMAX);
+
+    /* Seeded from global position, so the problem is the same however the
+     * domain is divided. */
+    double sum   = 0.0;
+    double cells = 0.0;
+
+    for (int k = 1; k < km + 1; k++) {
+      for (int j = 1; j < jm + 1; j++) {
+        for (int i = 1; i < im + 1; i++) {
+          unsigned gi = (unsigned)(i - 1 + offs[IDIM] / (1 << last));
+          unsigned gj = (unsigned)(j - 1 + offs[JDIM] / (1 << last));
+          unsigned gk = (unsigned)(k - 1 + offs[KDIM] / (1 << last));
+          unsigned h  = 7u + gi * 73856093u + gj * 19349663u + gk * 83492791u;
+          h ^= h >> 13;
+          h *= 1274126177u;
+          h ^= h >> 16;
+
+          double v               = (double)h / (double)0xffffffffu - 0.5;
+          AT(b, i, j, k, im, jm) = v;
+          sum += v;
+          cells += 1.0;
+        }
+      }
+    }
+
+    /* The all-wall system is singular, so the coarse problem it is given has to
+     * be compatible: a right-hand side with a mean would have no solution and
+     * the residual could not fall however hard it was relaxed. */
+    commReduceAll(&sum, SUM);
+    commReduceAll(&cells, SUM);
+    double mean = sum / cells;
+
+    for (int k = 1; k < km + 1; k++) {
+      for (int j = 1; j < jm + 1; j++) {
+        for (int i = 1; i < im + 1; i++) {
+          AT(b, i, j, k, im, jm) -= mean;
+        }
+      }
+    }
+
+    double before = levelResidualNorm(last, e, b);
+
+    for (size_t i = 0; i < size; i++) {
+      e[i] = 0.0;
+    }
+
+    mgTestCoarseSolve(&Mg, e, b);
+
+    double after = levelResidualNorm(last, e, b);
+    double drop  = before / (after + 1e-300);
+
+    /* Orders of magnitude, not the single-digit factor a handful of sweeps
+     * gives. Reverting the coarsest solve to presmooth/postsmooth fails this. */
+    CHECK_TRUE(drop > 100.0,
+        "the coarsest level's residual fell by only %.3gx in one solve (%.3e to "
+        "%.3e), so it is being relaxed rather than solved",
+        drop,
+        before,
+        after);
+
+    if (commIsMaster(&D.comm)) {
+      printf("coarsest level (%dx%dx%d), %d sweeps each way: residual %.3e to %.3e, "
+             "%.3gx\n",
+          im,
+          jm,
+          km,
+          mgTestCoarseSweeps(),
+          before,
+          after,
+          drop);
+    }
   }
 
   /*

@@ -33,6 +33,36 @@ FREE="$WORK/sphere-free.par"
 # The same setup without the body, for the iteration-count comparison.
 grep -v '^geometryFile' "$PAR" > "$FREE"
 
+# The solve tolerance the setup asks for. Fields are compared against it.
+TOL=$(sed -n 's/^eps  *\([0-9.eE+-]*\).*/\1/p' "$PAR" | head -1)
+
+# And the tolerance the fields being compared are produced at, an order of
+# magnitude below it.
+#
+# eps bounds a mean square residual over the fluid cells; tools/fieldcmp reports
+# the largest pointwise difference. Nothing relates the two, so a solver that
+# takes larger steps crosses the residual threshold from further out and shows a
+# larger pointwise difference while being no less converged. Comparing each
+# solver at the point it happened to stop therefore measures how the solvers
+# stop as much as what they converge to, and rejects faster iterations that are
+# demonstrably correct -- multigrid at the depth its grid supports lands 5.1e-04
+# from rb at eps = 1e-04, and 6.5e-06 once both are converged.
+#
+# This is not a loosening: the comparison tolerance below is unchanged. What
+# changes is that both sides are converged past it before it is applied, which
+# is what the requirement always said and what this script did not do.
+TIGHT="$WORK/sphere-tight.par"
+TIGHT_TOL=$(awk -v t="$TOL" 'BEGIN { printf "%.17g", t / 10.0 }')
+sed "s/^eps  *[0-9.eE+-]*/eps           $TIGHT_TOL/" "$PAR" > "$TIGHT"
+
+# A silent failure here would leave the gate comparing at the old tolerance and
+# reporting that everything agrees, which is the failure this whole change is
+# about, so the substitution is checked rather than assumed.
+if [ "$(sed -n 's/^eps  *\([0-9.eE+-]*\).*/\1/p' "$TIGHT" | head -1)" != "$TIGHT_TOL" ]; then
+    echo "check-solver-obstacle.sh: could not set eps to $TIGHT_TOL in $TIGHT" >&2
+    exit 2
+fi
+
 status=0
 
 # Iterations or cycles the last solve of a run took.
@@ -60,8 +90,12 @@ for solver in rb rbc mg cg; do
         exit 2
     fi
 
+    # The field the cross-solver comparison judges, converged past the tolerance
+    # it is judged at. The iteration-count runs below stay at the setup's own
+    # eps: what they measure is what the body costs a solver against the same
+    # setup without it, which is a comparison of a solver against itself.
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver.dump" \
-        "./CFD-Bench-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver.log" 2>&1 )
+        "./CFD-Bench-$TOOLCHAIN-test" "$TIGHT" > "$WORK/$solver.log" 2>&1 )
 
     ( cd "$ROOT" && "./CFD-Bench-$TOOLCHAIN" "$PAR" > "$WORK/$solver-plain.log" 2>&1 )
     ( cd "$ROOT" && "./CFD-Bench-$TOOLCHAIN" "$FREE" > "$WORK/$solver-free.log" 2>&1 )
@@ -85,9 +119,6 @@ for solver in rb rbc mg cg; do
     fi
 done
 
-# The solve tolerance the setup asks for; fields are compared against it.
-TOL=$(sed -n 's/^eps  *\([0-9.eE+-]*\).*/\1/p' "$PAR" | head -1)
-
 for solver in rbc mg cg; do
     printf -- '-- rb against %s\n' "$solver"
     if "$ROOT/tools/fieldcmp" "$WORK/rb.dump" "$WORK/$solver.dump" "$TOL"; then
@@ -99,6 +130,16 @@ for solver in rbc mg cg; do
 done
 
 printf '\n========== the answer does not depend on the rank count ==========\n'
+
+# This section stays at the setup's own eps, deliberately.
+#
+# The stopping artifact the section above converges away is a cross-solver one:
+# it appears because two different iterations are compared at the point each
+# crossed a residual threshold. Here each solver is compared against itself on a
+# different rank count, so both sides stop by the same rule after the same
+# number of iterations -- the equal counts below are asserted -- and there is no
+# such artifact to remove. Running these at a tighter tolerance would cost time
+# and change nothing the section tests.
 
 for solver in rb rbc mg cg; do
     make -C "$ROOT" SOLVER="$solver" tests >/dev/null 2>&1

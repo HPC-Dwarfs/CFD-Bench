@@ -2,18 +2,18 @@
 
 ## 1. Make the gate judge converged fields
 
-- [ ] 1.1 Record the current state: run `tests/run-all.sh` and note every step passes, so this change has a known-good starting point; verify the recorded result is green end to end
-- [ ] 1.2 Change `tests/check-solver-obstacle.sh` to solve each setup at a tolerance an order of magnitude below the setup's `eps` for the cross-solver comparison, and to keep comparing the resulting fields at `eps`; verify all four solvers still agree and the script exits zero
-- [ ] 1.3 Confirm the change distinguishes what it is meant to: verify that `mg` at one level deeper than the setup asks for, which lands 5.1e-04 from `rb` under the old gate, now agrees, and that a deliberately wrong field still fails
-- [ ] 1.4 Leave the rank-count L2 comparison as it is, and note in the script why it needs no tightening: it compares a solver against itself and carries no cross-solver stopping artifact; verify the rank-count section still passes for all four solvers
+- [x] 1.1 Record the current state: run `tests/run-all.sh` and note every step passes, so this change has a known-good starting point; verify the recorded result is green end to end
+- [x] 1.2 Change `tests/check-solver-obstacle.sh` to solve each setup at a tolerance an order of magnitude below the setup's `eps` for the cross-solver comparison, and to keep comparing the resulting fields at `eps`; verify all four solvers still agree and the script exits zero
+- [x] 1.3 Confirm the change distinguishes what it is meant to: verify that `mg` at one level deeper than the setup asks for, which lands 5.1e-04 from `rb` under the old gate, now agrees, and that a deliberately wrong field still fails
+- [x] 1.4 Leave the rank-count L2 comparison as it is, and note in the script why it needs no tightening: it compares a solver against itself and carries no cross-solver stopping artifact; verify the rank-count section still passes for all four solvers
 
 ## 2. Solve the coarsest level
 
-- [ ] 2.1 Replace the coarsest level's fixed `presmooth + postsmooth` relaxation with a much larger fixed sweep count, split evenly forward and backward so the symmetric shape keeps its `A^T A` form; verify `tests/checks/multigrid.c` still reports the cycle symmetric to machine precision with and without a body
-- [ ] 2.2 Choose the sweep count from measurement rather than by guess: record the coarse-level residual reduction and the resulting cycle count on `sphere-baseline` for a few values, and pick the knee; verify the chosen value is recorded in the code next to the constant
-- [ ] 2.3 Add a case to `tests/checks/multigrid.c` asserting the coarsest level's residual falls by orders of magnitude within one cycle, not by the factor a handful of sweeps would give; verify it passes at 1 and 4 ranks and fails with 2.1 reverted
-- [ ] 2.4 Confirm the coarse solve performs identical work regardless of the residual it is given, so the preconditioner stays a fixed linear operator; verify `tests/checks/cg.c` still reports the `mg` preconditioner linear and symmetric
-- [ ] 2.5 Measure the effect on its own, before any depth change: record `SOLVER=mg` cycles and wall clock on `sphere-baseline` at the setup's current `levels`; verify the cross-solver gate still passes
+- [x] 2.1 Replace the coarsest level's fixed `presmooth + postsmooth` relaxation with a much larger fixed sweep count, split evenly forward and backward so the symmetric shape keeps its `A^T A` form; verify `tests/checks/multigrid.c` still reports the cycle symmetric to machine precision with and without a body
+- [x] 2.2 Choose the sweep count from measurement rather than by guess: record the coarse-level residual reduction and the resulting cycle count on `sphere-baseline` for a few values, and pick the knee; verify the chosen value is recorded in the code next to the constant
+- [x] 2.3 Add a case to `tests/checks/multigrid.c` asserting the coarsest level's residual falls by orders of magnitude within one cycle, not by the factor a handful of sweeps would give; verify it passes at 1 and 4 ranks and fails with 2.1 reverted
+- [x] 2.4 Confirm the coarse solve performs identical work regardless of the residual it is given, so the preconditioner stays a fixed linear operator; verify `tests/checks/cg.c` still reports the `mg` preconditioner linear and symmetric
+- [x] 2.5 Measure the effect on its own, before any depth change: record `SOLVER=mg` cycles and wall clock on `sphere-baseline` at the setup's current `levels`; verify the cross-solver gate still passes
 
 ## 3. Use the depth the grids support
 
