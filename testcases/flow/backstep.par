@@ -54,6 +54,8 @@ tau      0.5    # safety factor for time stepsize control (<0 constant delt)
 # Multigrid data:
 # ---------
 
+# Already at its limit: 30 halves to 15, so this grid supports two levels and
+# asks for exactly that.
 levels        2         # Multigrid levels (should be >= 1)
 presmooth     5         # Pre-smoothning iterations
 postsmooth    5         # Post-smoothning iterations

@@ -12,6 +12,8 @@
  */
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "check.h"
 
@@ -64,6 +66,52 @@ static void buildHierarchy(void)
 
   multigridBuild(&Mg, &spec);
   HierarchyBuilt = 1;
+}
+
+/*
+ * Build the hierarchy and capture what it reported while doing it.
+ *
+ * The depth requirement is that the number of levels actually built is visible
+ * in the solver's output, so that a shallow hierarchy is apparent rather than
+ * inferred from poor convergence. That is a statement about what is printed, so
+ * it is read back rather than taken on trust.
+ *
+ * Only the master rank prints, and only the master redirects; every rank still
+ * calls buildHierarchy, which is collective.
+ */
+static void buildHierarchyCapturing(char *out, size_t outSize)
+{
+  out[0] = '\0';
+
+  if (!commIsMaster(&D.comm)) {
+    buildHierarchy();
+    return;
+  }
+
+  char path[] = "/tmp/mg-depth-XXXXXX";
+  int fd      = mkstemp(path);
+
+  if (fd < 0) {
+    buildHierarchy();
+    return;
+  }
+
+  fflush(stdout);
+  int saved = dup(1);
+  dup2(fd, 1);
+
+  buildHierarchy();
+
+  fflush(stdout);
+  dup2(saved, 1);
+  close(saved);
+
+  lseek(fd, 0, SEEK_SET);
+  ssize_t n = read(fd, out, outSize - 1);
+  out[(n > 0) ? (size_t)n : 0] = '\0';
+
+  close(fd);
+  unlink(path);
 }
 
 static void setup(CommType *base, int boundary)
@@ -865,6 +913,64 @@ int main(int argc, char **argv)
           after,
           totals[1],
           totals[2]);
+    }
+  }
+
+  /*
+   * ---- The hierarchy is as deep as asked for, or as deep as it can be ----
+   *
+   * Coarsening stops when a *local* extent cannot halve, so the depth available
+   * depends on the decomposition and not only on the grid. A setup must
+   * therefore be able to ask for more than can be built without failing, and a
+   * setup asking for less than the grid supports must get what it asked for
+   * rather than the maximum.
+   */
+  {
+    setup(&comm, NOSLIP);
+
+    char reported[4096];
+
+    /* Far more than any decomposition of this grid can give, so this is the
+     * clamped case. */
+    Params.levels = 99;
+    buildHierarchyCapturing(reported, sizeof(reported));
+    int built = mgTestLevels(&Mg);
+
+    CHECK_TRUE(built >= 2 && built < 99,
+        "asking for 99 levels built %d, which is neither clamped nor usable",
+        built);
+
+    if (commIsMaster(&D.comm)) {
+      char want[128];
+      snprintf(want,
+          sizeof(want),
+          "requested 99 levels, the decomposition supports %d",
+          built);
+
+      CHECK_TRUE(strstr(reported, want) != NULL,
+          "the clamp was not reported as \"%s\"; output was \"%s\"",
+          want,
+          reported);
+    }
+
+    /* And a request the decomposition can honour is honoured exactly, not
+     * silently deepened to the maximum. */
+    int asked     = built - 1;
+    Params.levels = asked;
+    buildHierarchyCapturing(reported, sizeof(reported));
+
+    CHECK_TRUE(mgTestLevels(&Mg) == asked,
+        "asked for %d levels on a grid supporting %d and got %d",
+        asked,
+        built,
+        mgTestLevels(&Mg));
+
+    if (commIsMaster(&D.comm)) {
+      CHECK_TRUE(strstr(reported, "the decomposition supports") == NULL,
+          "a request the decomposition can honour still reported a clamp: \"%s\"",
+          reported);
+
+      printf("hierarchy depth: %d available, %d requested and built\n", built, asked);
     }
   }
 

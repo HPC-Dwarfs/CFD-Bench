@@ -36,8 +36,14 @@ since coarsening is limited by the local extents and therefore by how the domain
 was divided.
 
 A setup SHALL NOT be configured with a depth materially shallower than its grid
-supports, because a shallow hierarchy leaves the coarsest problem large and the
-cycle weak.
+and its body support, because a shallow hierarchy leaves the coarsest problem
+large and the cycle weak.
+
+Where coarsening would stop representing an embedded body, the level at which
+that happens bounds the depth worth building, since a coarse correction computed
+on a domain that no longer contains the body is not a correction to the problem
+being solved. A setup SHALL be configured to the shallower of the two limits,
+and SHALL record which limit binds it.
 
 #### Scenario: Requested depth exceeds what the decomposition allows
 
@@ -48,6 +54,16 @@ cycle weak.
 
 - **WHEN** a multilevel solver initializes
 - **THEN** the number of levels it built is visible in its output, so a shallow hierarchy is apparent rather than inferred from poor convergence
+
+#### Scenario: A body bounds the depth before the grid does
+
+- **WHEN** a setup contains a body that coarsening stops representing at a shallower level than the grid stops halving at
+- **THEN** the setup is configured to the depth at which the body is still represented, rather than to the depth the grid alone would allow
+
+#### Scenario: Depth differing with the decomposition is reported rather than compared
+
+- **WHEN** the same setup is solved on two rank counts whose local extents allow different depths
+- **THEN** each run reports the depth it built, their converged fields agree, and their iteration counts are not required to match, because two hierarchies of different depth are two different iterations
 
 ## MODIFIED Requirements
 

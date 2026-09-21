@@ -155,10 +155,26 @@ supports two levels whatever it asks for, and the solver already says so. Fixing
 it means changing the grid to 200x48x48, which changes its resolution and the
 flow it records. That is a setup decision, not a solver one.
 
-`schaefer-turek.par` gets a `levels` change and no grid change, deliberately:
-its published drag and lift coefficients depend on the discretization, and this
-change must not move them. The value the gate checks is unchanged by hierarchy
-depth once converged, which decision 1 is what makes true.
+**Revised while implementing: `schaefer-turek.par` keeps its three levels.**
+
+The table above reasons from what each grid coarsens to, and that is only half
+the question for a setup with a body. Measured on the shipped setup, the
+cylinder is represented at every level at three, and stops being represented at
+**level 3 of 4** — so every level this setup could gain is one whose coarse
+correction is blind to the cylinder. `tests/check-setups.sh` already refuses a
+shipped setup that reports `unresolved at level`, and it is right to: this is
+the validation benchmark, its drag and lift are what it exists to produce, and
+they are what a correction computed without the body would move.
+
+The setup file had argued exactly this before the change and was right. Decision
+3 is what makes leaving it cheap: the coarse solve is most of what the extra
+depth would have bought, and it no longer needs depth to compensate for it.
+
+So the depth requirement is read as "the depth its grid **and its body** support".
+`karman.par` is left alone for its grid, `schaefer-turek.par` for its body, and
+both say so in the setup file. The other five setups are unaffected — four have
+no body at all, and `sphere-baseline` already reported an unresolved body at
+three levels, so raising it to four changes nothing about that.
 
 ### 5. The asymmetric shape has to earn its place
 
@@ -190,6 +206,20 @@ split kept or dropped on the result.
   and the depth requirement makes that reporting a requirement rather than a
   convenience. The gate's rank-count comparison is what catches a real
   divergence.
+
+  **Realised, and the gate needed changing for it.** `sphere-baseline` at four
+  levels builds 4 on 1 and 2 ranks and 3 on 4 and 8, reported every time, and
+  takes 3 cycles against 5. The gate asserted that a non-Krylov solver's
+  iteration count does not change with the rank count, which was true while
+  every setup asked for a depth any decomposition could build and is not true
+  now — so it failed a run whose fields agreed.
+
+  Equality is the wrong requirement there: two different hierarchies are two
+  different iterations, and a shallower one legitimately takes more cycles. The
+  gate now compares counts only when both runs built the same depth, and when
+  they did not, requires that the solver reported the clamp. The field
+  comparison is untouched and is what says the two runs still solved the same
+  system. Nothing is relaxed for `rb`, `rbc` or `cg`.
 
 - **Two shapes is two things to keep correct**, which is the argument that was
   made against them when `multigrid-preconditioner` chose a single cycle. → The

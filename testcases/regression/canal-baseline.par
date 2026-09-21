@@ -34,6 +34,8 @@ te       0.6
 dt       0.02
 tau      0.5
 
+# Already at its limit: 10 halves to 5, so this grid supports two levels and
+# asks for exactly that.
 levels        2
 presmooth     5
 postsmooth    5

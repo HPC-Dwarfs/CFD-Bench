@@ -72,6 +72,19 @@ tau      0.5    # safety factor for time stepsize control (<0 constant delt)
 # so at the fourth level it would be under two coarse cells and would round
 # away. The solver reports that rather than hiding it, but a hierarchy whose
 # coarsest level cannot see the body is not worth building.
+#
+# Kept at three when the other setups were given the depth their grids support.
+# This grid coarsens to five levels, and the cylinder stops being represented at
+# level 3 of 4 -- measured, not assumed -- so every level this setup could gain
+# is one whose coarse correction is blind to the body. That matters more here
+# than elsewhere because this is the validation benchmark: its drag and lift are
+# what it exists to produce, and they are what a correction computed without the
+# cylinder would move.
+#
+# The coarse solve is what the extra depth would have bought, and that is now
+# strong enough on its own that the depth is not needed to compensate for it.
+# karman.par is left alone for a different reason, its grid; this one is left
+# alone for the body.
 levels        3         # Multigrid levels (should be >= 1)
 presmooth     5         # Pre-smoothning iterations
 postsmooth    5         # Post-smoothning iterations

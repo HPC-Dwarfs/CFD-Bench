@@ -81,6 +81,12 @@ is_krylov() {
     esac
 }
 
+# Levels a multilevel solver reports building, empty for a solver that builds no
+# hierarchy.
+levels_built() {
+    sed -n 's/.*solver with \([0-9]*\) levels.*/\1/p' "$1" | head -1
+}
+
 printf '========== solvers agree with a body ==========\n'
 
 for solver in rb rbc mg cg; do
@@ -155,6 +161,9 @@ for solver in rb rbc mg cg; do
 
     printf -- '-- %s: %s on 1 rank, %s on %s ranks\n' "$solver" "$one" "$many" "$RANKS"
 
+    oneLevels=$(levels_built "$WORK/$solver-r1.log")
+    manyLevels=$(levels_built "$WORK/$solver-rn.log")
+
     if is_krylov "$solver"; then
         drift=$((one - many))
         [ "$drift" -lt 0 ] && drift=$((-drift))
@@ -162,6 +171,29 @@ for solver in rb rbc mg cg; do
         if [ "$drift" -gt 1 ]; then
             printf '%s: FAILED, iteration count moved by %s with the rank count, more than the one a Krylov solver is allowed\n' \
                 "$solver" "$drift"
+            status=1
+        fi
+    elif [ -n "$oneLevels" ] && [ -n "$manyLevels" ] && [ "$oneLevels" != "$manyLevels" ]; then
+        # A multilevel solver that built different hierarchies on the two rank
+        # counts is not running the same iteration, so its counts are not
+        # comparable and equality is the wrong thing to require.
+        #
+        # Coarsening stops when a *local* extent cannot halve, so the depth
+        # available depends on how the domain was divided. A setup asking for
+        # the depth its grid supports therefore gets fewer levels on a coarse
+        # decomposition -- sphere-baseline builds 4 levels on 1 rank and 3 on 8
+        # -- and a shallower hierarchy legitimately takes more cycles.
+        #
+        # What is required instead is that the solver said so, which is what
+        # makes a shallow hierarchy apparent rather than something to infer from
+        # poor convergence. The field comparison below is unchanged and is what
+        # says the two runs still solved the same system.
+        printf -- '   %s built %s levels on 1 rank and %s on %s; counts not compared\n' \
+            "$solver" "$oneLevels" "$manyLevels" "$RANKS"
+
+        if ! grep -q 'the decomposition supports' "$WORK/$solver-rn.log"; then
+            printf '%s: FAILED, built %s levels instead of %s without reporting it\n' \
+                "$solver" "$manyLevels" "$oneLevels"
             status=1
         fi
     elif [ "$one" != "$many" ]; then
