@@ -14,7 +14,7 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TOOLCHAIN=${TOOLCHAIN:-CLANG}
-BIN="$ROOT/CFD-Solver-$TOOLCHAIN"
+BIN="$ROOT/CFD-Bench-$TOOLCHAIN"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -175,10 +175,10 @@ uneven() {
 # Needs a build that actually constructs a hierarchy: the refusal lives where
 # the cycle is built, so a relaxation solver -- or CG with a cheap
 # preconditioner -- never reaches it and is right not to.
-MGBIN="$ROOT/CFD-Solver-SOLVERMG"
+MGBIN="$ROOT/CFD-Bench-SOLVERMG"
 
 if make -C "$ROOT" SOLVER=mg BUILD_DIR=./build/SOLVERMG \
-    TARGET="CFD-Solver-SOLVERMG" >/dev/null 2>&1; then
+    TARGET="CFD-Bench-SOLVERMG" >/dev/null 2>&1; then
 
     uneven > "$WORK/uneven-smoothing.par"
 
@@ -198,10 +198,10 @@ fi
 # on, so it needs its own binary. An unsupported value has to abort at
 # initialization rather than fall back to a default: a benchmark number
 # attributed to a preconditioner the run never used is worse than no number.
-CGBIN="$ROOT/CFD-Solver-SOLVERCG"
+CGBIN="$ROOT/CFD-Bench-SOLVERCG"
 
 if make -C "$ROOT" SOLVER=cg BUILD_DIR=./build/SOLVERCG \
-    TARGET="CFD-Solver-SOLVERCG" >/dev/null 2>&1; then
+    TARGET="CFD-Bench-SOLVERCG" >/dev/null 2>&1; then
 
     with_precon() {
         base 1 1

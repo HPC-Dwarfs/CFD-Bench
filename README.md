@@ -144,7 +144,7 @@ make
 
 Multiple tool chains can coexist in the same directory. Intermediate build
 results are stored in `./build/<TOOLCHAIN>/`. The executable is named
-`CFD-Solver-<TOOLCHAIN>`.
+`CFD-Bench-<TOOLCHAIN>`.
 
 To see all executed commands:
 
@@ -205,7 +205,7 @@ This requires `clang-format` in your `PATH`.
 Provide a parameter file describing the problem to solve:
 
 ```sh
-./CFD-Solver-CLANG testcases/flow/dcavity.par
+./CFD-Bench-CLANG testcases/flow/dcavity.par
 ```
 
 Setups live under `testcases/`, grouped by what they are for: `flow/` holds the
@@ -376,7 +376,7 @@ The check drivers link against the solver objects, so they need the test build:
 make tests
 ```
 
-which also produces `CFD-Solver-<TOOLCHAIN>-test`, a solver that writes a raw
+which also produces `CFD-Bench-<TOOLCHAIN>-test`, a solver that writes a raw
 dump of `p`, `u`, `v` and `w` when `NUSIF_FIELD_DUMP` names a path. `tools/fieldcmp`
 compares two dumps -- `--l2` judges by the L2 difference rather than the largest
 one, which is the honest measure when two runs differ only in the order their
@@ -392,7 +392,7 @@ and the Strouhal number of the Schaefer-Turek benchmark and reports each against
 its published range:
 
 ```sh
-./CFD-Solver-CLANG testcases/flow/schaefer-turek.par
+./CFD-Bench-CLANG testcases/flow/schaefer-turek.par
 tools/stcoeffs.py forces.dat
 ```
 

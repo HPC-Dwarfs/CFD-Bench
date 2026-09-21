@@ -61,10 +61,10 @@ for solver in rb rbc mg cg; do
     fi
 
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver.dump" \
-        "./CFD-Solver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver.log" 2>&1 )
+        "./CFD-Bench-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver.log" 2>&1 )
 
-    ( cd "$ROOT" && "./CFD-Solver-$TOOLCHAIN" "$PAR" > "$WORK/$solver-plain.log" 2>&1 )
-    ( cd "$ROOT" && "./CFD-Solver-$TOOLCHAIN" "$FREE" > "$WORK/$solver-free.log" 2>&1 )
+    ( cd "$ROOT" && "./CFD-Bench-$TOOLCHAIN" "$PAR" > "$WORK/$solver-plain.log" 2>&1 )
+    ( cd "$ROOT" && "./CFD-Bench-$TOOLCHAIN" "$FREE" > "$WORK/$solver-free.log" 2>&1 )
 
     withBody=$(iterations "$WORK/$solver-plain.log")
     without=$(iterations "$WORK/$solver-free.log")
@@ -104,9 +104,9 @@ for solver in rb rbc mg cg; do
     make -C "$ROOT" SOLVER="$solver" tests >/dev/null 2>&1
 
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver-r1.dump" \
-        "./CFD-Solver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver-r1.log" 2>&1 )
+        "./CFD-Bench-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver-r1.log" 2>&1 )
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver-rn.dump" \
-        "$MPIRUN" -n "$RANKS" "./CFD-Solver-$TOOLCHAIN-test" "$PAR" \
+        "$MPIRUN" -n "$RANKS" "./CFD-Bench-$TOOLCHAIN-test" "$PAR" \
         > "$WORK/$solver-rn.log" 2>&1 )
 
     one=$(iterations "$WORK/$solver-r1.log")
@@ -163,13 +163,13 @@ printf '\n========== the compressed layout agrees with the natural one =========
 # list entry carries, which is the thing being checked here.
 serialBuild() {
     make -C "$ROOT" ENABLE_MPI=false BUILD_DIR=./build/SERIAL SOLVER="$1" \
-        TARGET="CFD-Solver-SERIAL-$1" "CFD-Solver-SERIAL-$1-test" >/dev/null 2>&1
+        TARGET="CFD-Bench-SERIAL-$1" "CFD-Bench-SERIAL-$1-test" >/dev/null 2>&1
 }
 
 if serialBuild rb && serialBuild rbc; then
     for solver in rb rbc; do
         ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/serial-$solver.dump" \
-            "./CFD-Solver-SERIAL-$solver-test" "$PAR" > "$WORK/serial-$solver.log" 2>&1 )
+            "./CFD-Bench-SERIAL-$solver-test" "$PAR" > "$WORK/serial-$solver.log" 2>&1 )
     done
 
     a=$(iterations "$WORK/serial-rb.log")
@@ -183,8 +183,8 @@ if serialBuild rb && serialBuild rbc; then
         status=1
     fi
 
-    rm -f "$ROOT/CFD-Solver-SERIAL-rb" "$ROOT/CFD-Solver-SERIAL-rbc" \
-        "$ROOT/CFD-Solver-SERIAL-rb-test" "$ROOT/CFD-Solver-SERIAL-rbc-test"
+    rm -f "$ROOT/CFD-Bench-SERIAL-rb" "$ROOT/CFD-Bench-SERIAL-rbc" \
+        "$ROOT/CFD-Bench-SERIAL-rb-test" "$ROOT/CFD-Bench-SERIAL-rbc-test"
 else
     echo "FAILED: could not build the serial variants"
     status=1
