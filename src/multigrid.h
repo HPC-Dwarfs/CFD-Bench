@@ -67,28 +67,6 @@ typedef struct {
 } MgLevelType;
 
 /*
- * Which cycle shape a hierarchy runs.
- *
- * MG_SHAPE_SYMMETRIC is the cycle a preconditioner needs: its post-smoother is
- * the transpose of its pre-smoother, its coarsest solve is split evenly in both
- * directions, and its restriction is a scalar multiple of the transpose of
- * prolongation. A Krylov method preconditioned by anything else is not the
- * method it claims to be.
- *
- * MG_SHAPE_FAST drops all three, because a stationary iteration needs none of
- * them: it smooths forward on both sides, runs its coarsest solve forward, and
- * restricts with the cheaper eight-cell average. What symmetry costs is real --
- * the transposed restriction is roughly a fifth more work per cycle, and the
- * reversed smoother goes unstable above a relaxation factor of about 1.6 where
- * the forward one runs at 1.8.
- *
- * Everything else -- the hierarchy, the geometry coarsening, prolongation, the
- * residual, the correction masking -- is shared and unconditional. The two
- * differ in four branches, not in two code paths.
- */
-typedef enum { MG_SHAPE_SYMMETRIC = 0, MG_SHAPE_FAST } MgShapeType;
-
-/*
  * Everything a hierarchy needs to exist, and nothing about who wants one.
  *
  * The finest level borrows comm, the geometry arrays and the grid rather than
@@ -107,7 +85,6 @@ typedef struct {
   /* The smoother's relaxation factor. Deliberately not the SOR solvers' omg:
    * see the smoothing note in the change's design. */
   double smoothOmega;
-  MgShapeType shape;
 } MultigridSpecType;
 
 /*
@@ -120,7 +97,6 @@ typedef struct {
   double smoothOmega;
   int levels;
   int presmooth, postsmooth;
-  MgShapeType shape;
   MgLevelType *level;
 } MultigridType;
 

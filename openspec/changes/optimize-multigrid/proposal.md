@@ -57,6 +57,12 @@ one runs happily at 1.8. At three levels that was worth 14 cycles against 29.
   split is not worth two cycles to maintain and this change says so and removes
   it rather than shipping a second cycle for its own sake.
 
+  **Outcome: dropped.** At full depth with the coarsest level solved, the two
+  shapes take the same number of cycles, and the asymmetric one wins about 5% of
+  wall clock -- the per-cycle cost of the transposed restriction, not
+  convergence. It was built, measured and removed; the numbers are in
+  `design.md` decision 5 and the implementation is in the history.
+
 ### Non-goals
 
 - **Changing any setup's grid.** `karman.par` is 200x50x50 and supports only two

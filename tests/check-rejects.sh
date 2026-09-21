@@ -164,17 +164,9 @@ if [ -f "$ROOT/tests/geom/skewed.vox" ]; then
     fi
 fi
 
-# Unequal smoothing counts leave a symmetric multigrid cycle asymmetric, which is
-# a cycle the setup did not ask for and which a Krylov method cannot be
-# preconditioned by. Refused rather than reconciled -- but only for the shape
-# that needs it.
-#
-# The solver's cycle smooths forward on both sides and is under no obligation to
-# be anyone's transpose, so unequal counts are a legitimate thing to ask it for
-# and are accepted. That makes this two cases against two binaries: SOLVER=mg
-# builds the fast shape and has to accept, and CG preconditioned by mg builds the
-# symmetric shape and has to refuse. The second lives with the other
-# preconditioner cases below, which is where the CG binary is.
+# Unequal smoothing counts leave the multigrid cycle asymmetric, which is a
+# cycle the setup did not ask for and which a Krylov method cannot be
+# preconditioned by. Refused rather than reconciled.
 uneven() {
     base 1 1 | sed -e 's/^presmooth 2$/presmooth 4/' -e 's/^postsmooth 2$/postsmooth 2/'
     printf 'levels 2\n'
@@ -190,14 +182,11 @@ if make -C "$ROOT" SOLVER=mg BUILD_DIR=./build/SOLVERMG \
 
     uneven > "$WORK/uneven-smoothing.par"
 
-    printf -- '-- unequal smoothing counts are accepted by the solver cycle\n'
-
-    if ( cd "$WORK" && "$MGBIN" "$WORK/uneven-smoothing.par" >/dev/null 2>&1 ); then
-        echo "unequal smoothing counts, fast shape: OK, accepted"
-    else
-        echo "unequal smoothing counts, fast shape: FAILED, the run was refused"
-        status=1
-    fi
+    saved_bin=$BIN
+    BIN=$MGBIN
+    expect_reject "unequal smoothing counts are refused" "$WORK/uneven-smoothing.par" \
+        "must be equal"
+    BIN=$saved_bin
 
     rm -rf "$ROOT/build/SOLVERMG" "$MGBIN"
 else
@@ -225,14 +214,6 @@ if make -C "$ROOT" SOLVER=cg BUILD_DIR=./build/SOLVERCG \
     with_precon "bogus" > "$WORK/precon-bogus.par"
     expect_reject "an unknown preconditioner is refused" "$WORK/precon-bogus.par" \
         "Unsupported preconditioner"
-
-    # The other half of the unequal-smoothing case above. This build asks for the
-    # symmetric shape, because that is the one it preconditions with, so here the
-    # counts must match and unequal ones are refused.
-    uneven > "$WORK/uneven-precon.par"
-    printf 'precon mg\n' >> "$WORK/uneven-precon.par"
-    expect_reject "unequal smoothing counts are refused for the preconditioner" \
-        "$WORK/uneven-precon.par" "must be equal"
 
     BIN=$saved_bin
 

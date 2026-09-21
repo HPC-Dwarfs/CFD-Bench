@@ -42,11 +42,6 @@ static MultigridType Mg;
  * geometry cases do not inherit the level arrays of the case before them. */
 static int HierarchyBuilt = 0;
 
-/* Which cycle shape buildHierarchy asks for. The symmetry assertions are about
- * the preconditioner's shape and so run against this default; the solver's shape
- * is selected explicitly by the case that checks it. */
-static MgShapeType Shape = MG_SHAPE_SYMMETRIC;
-
 static void buildHierarchy(void)
 {
   if (HierarchyBuilt) {
@@ -67,8 +62,7 @@ static void buildHierarchy(void)
     .levels                      = Params.levels,
     .presmooth                   = Params.presmooth,
     .postsmooth                  = Params.postsmooth,
-    .smoothOmega                 = Params.smoothOmega,
-    .shape                       = Shape };
+    .smoothOmega                 = Params.smoothOmega };
 
   multigridBuild(&Mg, &spec);
   HierarchyBuilt = 1;
@@ -196,40 +190,6 @@ static void cycleApply(const double *rhs, double *out, size_t size)
   for (size_t i = 0; i < size; i++) {
     out[i] = D.p[i];
   }
-}
-
-/*
- * Cycles the currently built hierarchy until the residual meets tol, and copies
- * the result into out. Returns the cycles taken, or -1 if it did not get there.
- */
-#define CYCLE_LIMIT 500
-
-static int cycleToTolerance(const PressureLevelType *desc,
-    const double *rhs,
-    double *out,
-    size_t size,
-    double tol)
-{
-  for (size_t i = 0; i < size; i++) {
-    D.p[i] = 0.0;
-  }
-
-  int n      = 0;
-  double res = pressureResidualNorm(desc, D.p, rhs);
-
-  while (res > tol * tol && n < CYCLE_LIMIT) {
-    mgTestVcycle(&Mg, D.p, rhs);
-    res = pressureResidualNorm(desc, D.p, rhs);
-    ++n;
-  }
-
-  if (out != D.p) {
-    for (size_t i = 0; i < size; i++) {
-      out[i] = D.p[i];
-    }
-  }
-
-  return (res <= tol * tol) ? n : -1;
 }
 
 /*
@@ -1014,122 +974,7 @@ int main(int argc, char **argv)
     }
   }
 
-  /*
-   * ---- The solver's shape converges to the same field ----
-   *
-   * The fast shape gives up everything that makes a cycle symmetric: it smooths
-   * forward on both sides, solves the coarsest level forward, and restricts with
-   * the eight-cell average instead of the transpose of prolongation. None of
-   * that is required of a stationary iteration, and the requirement it is held
-   * to instead is this one -- that it converges to the field the symmetric shape
-   * converges to, to the solve tolerance.
-   *
-   * Both are run on the same problem from the same starting point, and compared
-   * after removing each one's mean: the all-wall system is singular, so its
-   * solutions are determined only up to a constant and two correct answers may
-   * legitimately sit at different levels.
-   */
-  {
-    setup(&comm, NOSLIP);
-
-    int fi, fj, fk;
-    mgTestLevelExtents(&Mg, 0, &fi, &fj, &fk);
-    size_t size = (size_t)(fi + 2) * (fj + 2) * (fk + 2);
-
-    double *rhs  = calloc(size, sizeof(double));
-    double *symP = calloc(size, sizeof(double));
-
-    PressureLevelType desc;
-    pressureLevelFromSolver(&S, &desc);
-
-    int offs[NDIMS] = { 0, 0, 0 };
-    commGetOffsets(&D.comm, offs, KMAX, JMAX, IMAX);
-
-    for (int k = 1; k < fk + 1; k++) {
-      for (int j = 1; j < fj + 1; j++) {
-        for (int i = 1; i < fi + 1; i++) {
-          double x = ((i - 1 + offs[IDIM]) + 0.5) / (double)IMAX;
-          double y = ((j - 1 + offs[JDIM]) + 0.5) / (double)JMAX;
-          double z = ((k - 1 + offs[KDIM]) + 0.5) / (double)KMAX;
-          AT(rhs, i, j, k, fi, fj) = cos(M_PI * x) * cos(M_PI * y) * cos(M_PI * z);
-        }
-      }
-    }
-
-    const double tol = 1e-8;
-
-    int symCycles = cycleToTolerance(&desc, rhs, symP, size, tol);
-
-    Shape = MG_SHAPE_FAST;
-    buildHierarchy();
-
-    int fastCycles = cycleToTolerance(&desc, rhs, D.p, size, tol);
-
-    CHECK_TRUE(symCycles > 0,
-        "the symmetric shape did not converge in %d cycles", CYCLE_LIMIT);
-    CHECK_TRUE(fastCycles > 0,
-        "the solver's shape did not converge in %d cycles", CYCLE_LIMIT);
-
-    /* Each field's own mean over the fluid, since the system fixes the solution
-     * only up to a constant. */
-    double meanSym = 0.0, meanFast = 0.0, cells = 0.0;
-
-    for (int k = 1; k < fk + 1; k++) {
-      for (int j = 1; j < fj + 1; j++) {
-        for (int i = 1; i < fi + 1; i++) {
-          meanSym += AT(symP, i, j, k, fi, fj);
-          meanFast += AT(D.p, i, j, k, fi, fj);
-          cells += 1.0;
-        }
-      }
-    }
-
-    commReduceAll(&meanSym, SUM);
-    commReduceAll(&meanFast, SUM);
-    commReduceAll(&cells, SUM);
-    meanSym /= cells;
-    meanFast /= cells;
-
-    double worst = 0.0;
-
-    for (int k = 1; k < fk + 1; k++) {
-      for (int j = 1; j < fj + 1; j++) {
-        for (int i = 1; i < fi + 1; i++) {
-          double d = fabs((AT(symP, i, j, k, fi, fj) - meanSym) -
-                          (AT(D.p, i, j, k, fi, fj) - meanFast));
-          if (d > worst) {
-            worst = d;
-          }
-        }
-      }
-    }
-
-    commReduceAll(&worst, MAX);
-
-    CHECK_TRUE(worst < tol,
-        "the two cycle shapes converged to different fields, worst difference "
-        "%.3e against a solve tolerance of %.3e",
-        worst,
-        tol);
-
-    if (commIsMaster(&D.comm)) {
-      printf("cycle shapes: symmetric %d cycles, fast %d cycles, fields agree to "
-             "%.3e\n",
-          symCycles,
-          fastCycles,
-          worst);
-    }
-
-    free(rhs);
-    free(symP);
-
-    Shape = MG_SHAPE_SYMMETRIC;
-  }
-
-  /* ---- The cycle is a symmetric operator ----
-   *
-   * Asserted of the symmetric shape only, which is the one a preconditioner
-   * uses and the only one required to have the property. */
+  /* ---- The cycle is a symmetric operator ---- */
   setup(&comm, NOSLIP);
   checkCycleSymmetry("cycle symmetry, obstacle-free");
 

@@ -193,6 +193,56 @@ This is a decision the measurements make, not one taken here. The task list
 sequences it that way: depth and coarse solve first, the comparison next, the
 split kept or dropped on the result.
 
+### Outcome: the gap closed, and the split is removed
+
+Measured at full depth with the strengthened coarse solve, each shape at its own
+best stable relaxation factor. `canal.par` shortened to `te 0.2` is the only one
+of these that runs long enough to time against a 0.01 s clock; the other two are
+reported for completeness and their cycle counts are too small to read a ratio
+from.
+
+```
+  canal, 200x40x40, 4 levels, smoothOmega 1.8
+      symmetric      20 cycles   1.51 s
+      fast           20 cycles   1.43 s
+
+  sphere-baseline, 48x24x24, 4 levels
+      symmetric       3 cycles   0.03 s   (best at 1.6; diverges at 1.8)
+      fast            2 cycles   0.02 s   (best at 1.6)
+
+  dcavity-baseline, 32x32x32, 5 levels
+      symmetric       2 cycles   0.12 s
+      fast            1 cycle    0.07 s
+```
+
+On the case big enough to measure, **the cycle counts are identical**. The
+convergence advantage that justified the split -- 14 cycles against 29, a 2.1x
+ratio -- is entirely gone. It was an artifact of a regime where the smoother did
+most of the work, and depth and the coarse solve have removed that regime, which
+is exactly what decision 5 predicted might happen.
+
+What remains is 1.43 s against 1.51 s, about 5%, and that is not convergence at
+all: it is the per-cycle cost of the three blend passes that make restriction the
+transpose of prolongation. Real, but it is the whole of the remaining case for
+shipping a second cycle shape.
+
+The second justification did not survive either. The fast shape was supposed to
+be usable at relaxation factors the reversed smoother cannot take, and on
+`canal` the symmetric shape runs at 1.8 perfectly well -- the divergence at 1.8
+is specific to `sphere-baseline`, where the symmetric shape's best factor already
+converges in 3 cycles. Where the headroom exists it buys nothing, and where it
+would buy something it is not needed.
+
+So the split is removed and section 4 reverted. Two cycle shapes is two things to
+keep correct, in the file where every multigrid defect this project has found
+actually lived, and every future change to it would have to be validated against
+both. 5% of the wall clock of one setup does not pay for that. The decision was
+pre-committed to the measurement and the measurement went the other way.
+
+What is kept is decision 2's finding that the shapes differ in four branches
+rather than two code paths -- if a future change makes the case again, the
+implementation is in the history at commit 27248c3 and is small.
+
 ## Risks / Trade-offs
 
 - **Deeper hierarchies move the mg baselines again**, a third time in three

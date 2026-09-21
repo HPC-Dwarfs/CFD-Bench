@@ -68,11 +68,74 @@ iteration count grows with resolution. The multigrid preconditioner does fix it.
 Doubling the grid in every direction on the Poisson problem the checks use takes
 the diagonally preconditioned solve from 133 iterations to 263, and the
 multigrid preconditioned one from 10 to 11. On `sphere-baseline`, `SOLVER=cg`
-with `precon mg` converges in 5 iterations against 117 with `jacobi`, and runs
-the whole setup in 0.12 s against 0.39 s for `jacobi` and 0.53 s for
-`SOLVER=mg`.
+with `precon mg` converges in 2 iterations against 117 with `jacobi`, and runs
+the whole setup in 0.03 s against 0.15 s. `SOLVER=mg` takes 3 cycles and 0.03 s.
+
+`jacobi` and `none` take the same number of iterations here, which is not a
+mistake: these grids are uniform, so the operator's diagonal is very nearly
+constant, and scaling a preconditioner by a constant does not change the Krylov
+space conjugate gradients builds. Diagonal preconditioning earns its place on a
+graded mesh, not this one.
+
+### Multigrid hierarchy depth
+
+Coarsening halves every extent, and stops when a *local* extent cannot halve, so
+the depth available depends on the decomposition and not only on the grid. A
+setup should ask for the depth its grid supports: a shallow hierarchy leaves the
+coarsest problem large and the cycle weak, and on `sphere-baseline` the fourth
+level is worth a third of the cycles.
+
+Asking for more than can be built is safe. The solver builds what it can, prints
+`Multigrid: requested N levels, the decomposition supports M`, and solves to the
+tolerance asked for. The same setup can therefore take a different number of
+cycles on different rank counts, which is reported rather than hidden; the
+cross-solver gate compares iteration counts across rank counts only when both
+runs built the same depth.
+
+Two shipped setups are deliberately shallower than their grids allow, and say so
+in the setup file:
+
+- **`karman.par`** is limited by its grid. 50 halves to 25, so it supports two
+  levels whatever it asks for. The fix is a grid that coarsens, which would
+  change its resolution and the flow it records.
+- **`schaefer-turek.par`** is limited by its body. The grid coarsens to five
+  levels, but the cylinder stops being represented at level 3 of 4, and a coarse
+  correction computed on a domain that no longer contains the cylinder is not a
+  correction to the problem being solved. It matters here more than elsewhere
+  because this is the validation benchmark and the drag and lift are what it
+  exists to produce.
+
+### The coarsest level
+
+The coarsest level is solved, not smoothed. It gets a fixed 40 relaxation sweeps
+in each direction, where it used to get `presmooth` then `postsmooth` -- ten in
+total, on a grid of a few hundred cells, which is a relaxation. The correction a
+cycle carries upward is only as good as the coarse problem it came from, and a
+coarsest level far from its own solution limits the cycle however many levels sit
+above it.
+
+The count is fixed rather than iterated to a tolerance, so that the cycle stays a
+fixed linear operator and can precondition a Krylov method. It is cheap in
+absolute terms: 80 sweeps of a 12x6x6 grid is about one and a quarter passes over
+a 48x24x24 finest level. The value was chosen by measurement, recorded next to the
+constant in `src/multigrid.c`.
+
+Together with the depth above, this takes `SOLVER=mg` on `sphere-baseline` from
+29 cycles and 0.28 s to 3 cycles and 0.03 s, and `SOLVER=cg` with `precon mg`
+from 5 iterations to 2.
 
 ### Multigrid smoothing
+
+There is one cycle, and it is symmetric. A solver does not need symmetry --
+nothing about a stationary iteration requires it -- and an asymmetric cycle was
+built and measured against this one: forward smoothing on both sides, the cheaper
+eight-cell averaging restriction, and no equal-sweep-count constraint. At three
+levels with the old coarse relaxation it was worth 14 cycles against 29. At the
+depth the grids support, with the coarsest level solved, the two take *the same
+number of cycles* and it wins about 5% of wall clock, which is the per-cycle cost
+of the transposed restriction and nothing to do with convergence. That did not
+justify a second cycle shape to keep correct, so it was removed; the reasoning
+and the numbers are in the `optimize-multigrid` change.
 
 The multigrid cycle is symmetric: its post-smoother sweeps the two colours in
 the reverse order of the pre-smoother, its coarsest level is relaxed equally in
@@ -95,11 +158,12 @@ Two consequences for setups:
   measured that both converges and leaves the converged field inside the
   cross-solver agreement gate. Lower is safer and slower.
 
-Making the cycle correct and symmetric costs `SOLVER=mg` roughly twice the
-cycles it used to take. Part of that is the smoothing factor, and part is that
-the previous cycle was faster partly by accident -- it applied the coarse
-correction twice on every level below the finest. The trade buys a cycle that
-can precondition CG, which is where the speed now is.
+Making the cycle correct and symmetric cost `SOLVER=mg` roughly twice the cycles
+it had been taking. Part of that was the smoothing factor, and part that the
+previous cycle was faster partly by accident -- it applied the coarse correction
+twice on every level below the finest. Solving the coarsest level and using the
+depth the grids support has since paid that back several times over, so the
+symmetric cycle is no longer a trade against speed.
 
 ### Obstacles
 
