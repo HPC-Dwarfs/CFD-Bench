@@ -47,7 +47,12 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
        .levels                      = p->levels,
        .presmooth                   = p->presmooth,
        .postsmooth                  = p->postsmooth,
-       .smoothOmega                 = p->smoothOmega };
+       .smoothOmega                 = p->smoothOmega,
+       /* A solver has no need of a symmetric cycle -- nothing about a stationary
+        * iteration requires it, and the constraints that buy it cost this solver
+        * both work per cycle and convergence. The preconditioner in precon-mg.c
+        * is what needs the symmetric shape, and asks for it. */
+       .shape                       = MG_SHAPE_FAST };
 
   multigridBuild(mg, &spec);
 

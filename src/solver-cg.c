@@ -340,7 +340,8 @@ void initSolver(Solver *s, Discretization *d, Parameter *p)
       .levels                      = p->levels,
       .presmooth                   = p->presmooth,
       .postsmooth                  = p->postsmooth,
-      .smoothOmega                 = p->smoothOmega };
+      .smoothOmega                 = p->smoothOmega,
+       .shape                       = MG_SHAPE_SYMMETRIC };
 
     multigridBuild(cg->mg, &spec);
     preconMgInit(&cg->precon, cg->mg);

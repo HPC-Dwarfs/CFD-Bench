@@ -26,11 +26,11 @@
 
 ## 4. A cycle shape the solver can choose
 
-- [ ] 4.1 Add an `MgShapeType` field to `MultigridSpecType` and `MultigridType` selecting the symmetric or the fast shape, with every caller passing the symmetric one so nothing moves yet; verify the tree builds under all four solvers and `tests/checks/multigrid.c` reports no change
-- [ ] 4.2 Branch the post-smoother direction, the coarsest solve's split and the restriction operator on the shape, keeping the eight-cell averaging restriction alongside the transposed one; verify the symmetric shape's results are bit-identical to before the branch was introduced
-- [ ] 4.3 Move the equal-`presmooth`/`postsmooth` refusal behind the symmetric shape, since only that shape needs it; verify `tests/check-rejects.sh` still refuses unequal counts for a symmetric build and accepts them for a fast one
-- [ ] 4.4 Have `solver-mg.c` request the fast shape and `precon-mg.c` the symmetric one; verify `tests/checks/cg.c` still reports the `mg` preconditioner symmetric and `tests/checks/multigrid.c` reports the solver's shape converging
-- [ ] 4.5 Extend `tests/checks/multigrid.c` so the symmetry assertions apply to the symmetric shape and the fast shape gets its own assertion that it converges to the same field to the solve tolerance; verify both at 1 and 4 ranks
+- [x] 4.1 Add an `MgShapeType` field to `MultigridSpecType` and `MultigridType` selecting the symmetric or the fast shape, with every caller passing the symmetric one so nothing moves yet; verify the tree builds under all four solvers and `tests/checks/multigrid.c` reports no change
+- [x] 4.2 Branch the post-smoother direction, the coarsest solve's split and the restriction operator on the shape, keeping the eight-cell averaging restriction alongside the transposed one; verify the symmetric shape's results are bit-identical to before the branch was introduced
+- [x] 4.3 Move the equal-`presmooth`/`postsmooth` refusal behind the symmetric shape, since only that shape needs it; verify `tests/check-rejects.sh` still refuses unequal counts for a symmetric build and accepts them for a fast one
+- [x] 4.4 Have `solver-mg.c` request the fast shape and `precon-mg.c` the symmetric one; verify `tests/checks/cg.c` still reports the `mg` preconditioner symmetric and `tests/checks/multigrid.c` reports the solver's shape converging
+- [x] 4.5 Extend `tests/checks/multigrid.c` so the symmetry assertions apply to the symmetric shape and the fast shape gets its own assertion that it converges to the same field to the solve tolerance; verify both at 1 and 4 ranks
 
 ## 5. Decide whether the split is worth keeping
 

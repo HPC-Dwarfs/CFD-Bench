@@ -114,23 +114,35 @@ static void restrictMG(MultigridType *mg, MgLevelType *fine, MgLevelType *coarse
     work[i] = fineField[i];
   }
 
-  /* The three blends, in the reverse of the order prolongation applies them.
-   * Each touches one axis only, so in fact they commute and the order is free;
-   * it is written reversed because that is what the transpose is, and a reader
-   * checking the derivation should not have to notice the commutation first. */
-  commExchange(&fine->comm, work);
-  pressureBcApply(mg->bc, &fine->comm, work, im, jm, km);
-  prolongateBlend(work, im, jm, km, fi, fj, 2);
+  /*
+   * The three blends are what make this the transpose of prolongation rather
+   * than a plain average, and they are the part the fast shape does without:
+   * skipping them leaves the eight-cell mean below, which is a cheaper and
+   * perfectly good restriction for a stationary iteration and is what this
+   * operator was before the cycle had to be symmetric. Roughly a fifth of the
+   * cycle's work is here.
+   *
+   * Written in the reverse of the order prolongation applies them. Each touches
+   * one axis only, so in fact they commute and the order is free; it is written
+   * reversed because that is what the transpose is, and a reader checking the
+   * derivation should not have to notice the commutation first.
+   */
+  if (mg->shape == MG_SHAPE_SYMMETRIC) {
+    commExchange(&fine->comm, work);
+    pressureBcApply(mg->bc, &fine->comm, work, im, jm, km);
+    prolongateBlend(work, im, jm, km, fi, fj, 2);
 
-  commExchange(&fine->comm, work);
-  pressureBcApply(mg->bc, &fine->comm, work, im, jm, km);
-  prolongateBlend(work, im, jm, km, fi, fj, 1);
+    commExchange(&fine->comm, work);
+    pressureBcApply(mg->bc, &fine->comm, work, im, jm, km);
+    prolongateBlend(work, im, jm, km, fi, fj, 1);
 
-  commExchange(&fine->comm, work);
-  pressureBcApply(mg->bc, &fine->comm, work, im, jm, km);
-  prolongateBlend(work, im, jm, km, fi, fj, 0);
+    commExchange(&fine->comm, work);
+    pressureBcApply(mg->bc, &fine->comm, work, im, jm, km);
+    prolongateBlend(work, im, jm, km, fi, fj, 0);
+  }
 
-  /* inject^T, scaled: the sum over each coarse cell's eight children. */
+  /* inject^T, scaled: the sum over each coarse cell's eight children. Without
+   * the blends above this is exactly the eight-cell average. */
   commExchange(&fine->comm, work);
 
   for (int k = 1; k < coarse->kmaxLocal + 1; k++) {
@@ -480,6 +492,14 @@ static void residualField(MultigridType *mg, MgLevelType *lv, double *p, const d
  */
 static void coarseSolve(MultigridType *mg, MgLevelType *lv, double *p, const double *rhs)
 {
+  if (mg->shape == MG_SHAPE_FAST) {
+    /* The same total work, all forward. Nothing here needs the A^T A form, and
+     * the forward sweep is the one that stays stable at the larger relaxation
+     * factors this shape exists to use. */
+    smooth(mg, lv, p, rhs, 2 * MG_COARSE_SWEEPS, 0);
+    return;
+  }
+
   smooth(mg, lv, p, rhs, MG_COARSE_SWEEPS, 0);
   smooth(mg, lv, p, rhs, MG_COARSE_SWEEPS, 1);
 }
@@ -510,7 +530,11 @@ static void vcycle(MultigridType *mg, int level, double *p, const double *rhs)
   correct(lv, p);
   pressureBcApply(mg->bc, &lv->comm, p, lv->imaxLocal, lv->jmaxLocal, lv->kmaxLocal);
 
-  smooth(mg, lv, p, rhs, mg->postsmooth, 1);
+  /* Reversed for the symmetric shape, so the two smoothing phases are a
+   * transpose pair; forward for the fast one, which needs no such pair and for
+   * which the reversed sweep is the part that goes unstable above a relaxation
+   * factor of about 1.6. */
+  smooth(mg, lv, p, rhs, mg->postsmooth, mg->shape == MG_SHAPE_SYMMETRIC);
 }
 
 /*
@@ -637,8 +661,12 @@ void multigridBuild(MultigridType *mg, const MultigridSpecType *spec)
    * one the setup asked for would still converge, and nothing downstream would
    * say so -- but a Krylov method preconditioned by it would no longer be
    * conjugate gradients.
+   *
+   * Only the symmetric shape needs it. The fast shape smooths forward on both
+   * sides and is under no obligation to be anyone's transpose, so unequal counts
+   * are a legitimate thing to ask it for and are accepted.
    */
-  if (spec->presmooth != spec->postsmooth) {
+  if (spec->shape == MG_SHAPE_SYMMETRIC && spec->presmooth != spec->postsmooth) {
     if (commIsMaster(spec->comm)) {
       fprintf(stderr,
           "Multigrid: presmooth is %d and postsmooth is %d. They must be equal, "
@@ -655,6 +683,7 @@ void multigridBuild(MultigridType *mg, const MultigridSpecType *spec)
   mg->levels     = spec->levels;
   mg->presmooth  = spec->presmooth;
   mg->postsmooth = spec->postsmooth;
+  mg->shape      = spec->shape;
 
   MgLevelType *levels = malloc((size_t)mg->levels * sizeof(MgLevelType));
 
