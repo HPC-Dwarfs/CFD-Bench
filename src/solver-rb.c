@@ -75,7 +75,7 @@ double solve(Solver *s, double *p, const double *rhs)
   double sweepRes = DBL_MAX;
 
   TIMESTART
-  while ((sweepRes >= epssq) && (it < itermax)) {
+  while (solveContinues(sweepRes, epssq, it, itermax)) {
     sweepRes = 0.0;
 
     for (int color = 0; color < 2; color++) {
@@ -132,11 +132,9 @@ double solve(Solver *s, double *p, const double *rhs)
 
   double res = pressureResidualNorm(&lv, p, rhs);
 
-#ifdef VERBOSE
-  if (commIsMaster(s->comm)) {
-    printf("Solver took %d iterations to reach %e\n", it, sqrt(res));
-  }
+  res = solveReport(s, "Solver", "iterations", it, sweepRes, res);
 
+#ifdef VERBOSE
   printProfile(s->comm, it);
 #endif
 

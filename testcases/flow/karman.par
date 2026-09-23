@@ -78,6 +78,12 @@ tau      0.5    # safety factor for time stepsize control (<0 constant delt)
 # Multigrid data:
 # ---------
 
+# Left at 3 knowing only 2 can be built, and the solver says so at startup.
+# Coarsening halves every extent, and 50 halves to 25, so this grid supports two
+# levels whatever is asked for. Raising the request would not add a level; the
+# only fix is a grid that coarsens, 200x48x48, and that changes the resolution
+# and so the flow this setup records. That is a setup decision rather than a
+# solver one and is deliberately not taken here.
 levels        3         # Multigrid levels (should be >= 1)
 presmooth     5         # Pre-smoothning iterations
 postsmooth    5         # Post-smoothning iterations

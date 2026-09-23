@@ -465,7 +465,7 @@ double solve(Solver *s, double *p, const double *rhs)
     dir[i] = z[i];
   }
 
-  while ((rr / lv.fluidCells >= epssq) && (it < itermax)) {
+  while (solveContinues(rr / lv.fluidCells, epssq, it, itermax)) {
     pressureApplyOperator(&lv, dir, q);
 
     double dq = dotLocal(&lv, dir, q);
@@ -546,11 +546,9 @@ double solve(Solver *s, double *p, const double *rhs)
    * rather than of the one the recurrence believed it had. */
   double res     = pressureResidualNorm(&lv, p, rhs);
 
-#ifdef VERBOSE
-  if (commIsMaster(s->comm)) {
-    printf("Conjugate Gradient took %d iterations to reach %e\n", it, sqrt(res));
-  }
+  res = solveReport(s, "Conjugate Gradient", "iterations", it, rr / lv.fluidCells, res);
 
+#ifdef VERBOSE
   printProfile(s->comm, it);
 #endif
 

@@ -1,0 +1,82 @@
+#==============================================================================
+#   karman-small: benchmark tier. Flow past a cylinder in a channel, 192x48x48.
+#
+#   A benchmark tier, not a validation setup: it exists to be timed, carries
+#   no baseline, and its flow is not a result. Derived from
+#   ../flow/karman.par, in a 32x8x8 channel rather than 30x8x8 so the
+#   ratio is exactly 4:1:1 and the cells are cubic.
+#   See README.md for the sizing rule.
+#==============================================================================
+
+# What tests/check-bench-tiers.sh certifies: the rank counts this tier is
+# meant for, the multigrid depth it keeps at every one of them, and which
+# limit sets that depth -- the grid, or the body the grid has to represent.
+# bench-ranks       1 8 27
+# bench-min-levels  3
+# bench-bound       body
+
+name karman
+
+bcLeft    3
+bcRight   3
+bcBottom  1
+bcTop     1
+bcFront   1
+bcBack    1
+
+gx    0.0
+gy    0.0
+gz    0.0
+
+re    1000.0
+
+u_init    1.0
+v_init    0.0
+w_init    0.0
+p_init    0.0
+
+# Cubic cells: every extent is the domain length times the same factor.
+xlength    32.0
+ylength    8.0
+zlength    8.0
+imax       192
+jmax       48
+kmax       48
+
+# Analytic rather than a voxel volume: the same predicate and the same
+# subsampling, without a volume to quantise first -- and a voxel volume for the
+# large tier would need some 226 million voxels. Same body as karman.par.
+geometryFile  cylinder-z:5.0,4.0,1.0
+
+# A fixed step, not an adaptive one: tau 0 bypasses the controller, so every
+# tier of this case runs the same 200 steps whatever its grid or its flow.
+# dt is a power of two so that t accumulates exactly, and te is 199 of them:
+# the loop runs while t <= te, which is 200 steps.
+#   The large tier's convective bound, h / |u| = 0.021 at h = 1/24 with the
+#   flow accelerated to about 2 past the cylinder, is the tighter one; 1/128
+#   is under half of it.
+# Why this many steps, measured on one rank of an Apple M2 Pro:
+#   9.3 s for the small tier on one rank. Startup is 0.35 s, but the first
+#   two solves take 49 cycles each against 1-4 afterwards, because the uniform
+#   initial flow is not divergence-free around the cylinder: together about a
+#   fifth of the run at 200 steps, against nearly half at 100.
+#   Far beyond 200 buys little: with a step this small the pressure barely
+#   changes from one step to the next, and within a few hundred steps every
+#   solve is a single cycle, so a longer run times the solver less, not more.
+te       1.5546875
+dt       0.0078125
+tau      0.0
+
+# levels 3: the cylinder is 12 cells across and stops being
+# represented at level 3, so level 2 is the coarsest that sees it.
+# The grid alone would allow more. At 27 ranks the body still binds:
+# 3 levels, which the depth check certifies.
+levels        3
+presmooth     5
+postsmooth    5
+
+itermax  20000
+eps      0.0001
+omg      1.8
+gamma    0.9
+#==============================================================================

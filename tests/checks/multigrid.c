@@ -12,6 +12,8 @@
  */
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "check.h"
 
@@ -64,6 +66,52 @@ static void buildHierarchy(void)
 
   multigridBuild(&Mg, &spec);
   HierarchyBuilt = 1;
+}
+
+/*
+ * Build the hierarchy and capture what it reported while doing it.
+ *
+ * The depth requirement is that the number of levels actually built is visible
+ * in the solver's output, so that a shallow hierarchy is apparent rather than
+ * inferred from poor convergence. That is a statement about what is printed, so
+ * it is read back rather than taken on trust.
+ *
+ * Only the master rank prints, and only the master redirects; every rank still
+ * calls buildHierarchy, which is collective.
+ */
+static void buildHierarchyCapturing(char *out, size_t outSize)
+{
+  out[0] = '\0';
+
+  if (!commIsMaster(&D.comm)) {
+    buildHierarchy();
+    return;
+  }
+
+  char path[] = "/tmp/mg-depth-XXXXXX";
+  int fd      = mkstemp(path);
+
+  if (fd < 0) {
+    buildHierarchy();
+    return;
+  }
+
+  fflush(stdout);
+  int saved = dup(1);
+  dup2(fd, 1);
+
+  buildHierarchy();
+
+  fflush(stdout);
+  dup2(saved, 1);
+  close(saved);
+
+  lseek(fd, 0, SEEK_SET);
+  ssize_t n = read(fd, out, outSize - 1);
+  out[(n > 0) ? (size_t)n : 0] = '\0';
+
+  close(fd);
+  unlink(path);
 }
 
 static void setup(CommType *base, int boundary)
@@ -142,6 +190,36 @@ static void cycleApply(const double *rhs, double *out, size_t size)
   for (size_t i = 0; i < size; i++) {
     out[i] = D.p[i];
   }
+}
+
+/*
+ * L2 of the residual at one level.
+ *
+ * residualField writes zero at a solid cell -- an identity row already
+ * satisfied by p = 0 -- so summing over the whole interior is the same as
+ * summing over the fluid.
+ */
+static double levelResidualNorm(int level, double *p, const double *rhs)
+{
+  mgTestResidualField(&Mg, level, p, rhs);
+
+  int im, jm, km;
+  mgTestLevelExtents(&Mg, level, &im, &jm, &km);
+  const double *r = mgTestLevelR(&Mg, level);
+
+  double sum = 0.0;
+
+  for (int k = 1; k < km + 1; k++) {
+    for (int j = 1; j < jm + 1; j++) {
+      for (int i = 1; i < im + 1; i++) {
+        double v = AT(r, i, j, k, im, jm);
+        sum += v * v;
+      }
+    }
+  }
+
+  commReduceAll(&sum, SUM);
+  return sqrt(sum);
 }
 
 /* Over the fluid unknowns, which is where the operator is defined. */
@@ -573,6 +651,109 @@ int main(int argc, char **argv)
   }
 
   /*
+   * The coarsest level is solved, not relaxed.
+   *
+   * The correction a cycle carries upward is only as good as the coarse problem
+   * it came from, so a coarsest level still far from its own solution limits the
+   * whole cycle however many levels sit above it. It used to get presmooth then
+   * postsmooth sweeps -- eight here, ten on the shipped setups -- which reduces
+   * that level's residual by a single-digit factor and leaves it dominating.
+   *
+   * Driven directly rather than through a whole cycle, because what is being
+   * measured is what the coarsest solve achieves on its own.
+   */
+  {
+    int last = mgTestLevels(&Mg) - 1;
+
+    int im, jm, km;
+    mgTestLevelExtents(&Mg, last, &im, &jm, &km);
+
+    double *e = mgTestLevelE(&Mg, last);
+    double *b = mgTestLevelB(&Mg, last);
+
+    size_t size = (size_t)(im + 2) * (jm + 2) * (km + 2);
+
+    for (size_t i = 0; i < size; i++) {
+      e[i] = 0.0;
+      b[i] = 0.0;
+    }
+
+    int offs[NDIMS] = { 0, 0, 0 };
+    commGetOffsets(&D.comm, offs, KMAX, JMAX, IMAX);
+
+    /* Seeded from global position, so the problem is the same however the
+     * domain is divided. */
+    double sum   = 0.0;
+    double cells = 0.0;
+
+    for (int k = 1; k < km + 1; k++) {
+      for (int j = 1; j < jm + 1; j++) {
+        for (int i = 1; i < im + 1; i++) {
+          unsigned gi = (unsigned)(i - 1 + offs[IDIM] / (1 << last));
+          unsigned gj = (unsigned)(j - 1 + offs[JDIM] / (1 << last));
+          unsigned gk = (unsigned)(k - 1 + offs[KDIM] / (1 << last));
+          unsigned h  = 7u + gi * 73856093u + gj * 19349663u + gk * 83492791u;
+          h ^= h >> 13;
+          h *= 1274126177u;
+          h ^= h >> 16;
+
+          double v               = (double)h / (double)0xffffffffu - 0.5;
+          AT(b, i, j, k, im, jm) = v;
+          sum += v;
+          cells += 1.0;
+        }
+      }
+    }
+
+    /* The all-wall system is singular, so the coarse problem it is given has to
+     * be compatible: a right-hand side with a mean would have no solution and
+     * the residual could not fall however hard it was relaxed. */
+    commReduceAll(&sum, SUM);
+    commReduceAll(&cells, SUM);
+    double mean = sum / cells;
+
+    for (int k = 1; k < km + 1; k++) {
+      for (int j = 1; j < jm + 1; j++) {
+        for (int i = 1; i < im + 1; i++) {
+          AT(b, i, j, k, im, jm) -= mean;
+        }
+      }
+    }
+
+    double before = levelResidualNorm(last, e, b);
+
+    for (size_t i = 0; i < size; i++) {
+      e[i] = 0.0;
+    }
+
+    mgTestCoarseSolve(&Mg, e, b);
+
+    double after = levelResidualNorm(last, e, b);
+    double drop  = before / (after + 1e-300);
+
+    /* Orders of magnitude, not the single-digit factor a handful of sweeps
+     * gives. Reverting the coarsest solve to presmooth/postsmooth fails this. */
+    CHECK_TRUE(drop > 100.0,
+        "the coarsest level's residual fell by only %.3gx in one solve (%.3e to "
+        "%.3e), so it is being relaxed rather than solved",
+        drop,
+        before,
+        after);
+
+    if (commIsMaster(&D.comm)) {
+      printf("coarsest level (%dx%dx%d), %d sweeps each way: residual %.3e to %.3e, "
+             "%.3gx\n",
+          im,
+          jm,
+          km,
+          mgTestCoarseSweeps(),
+          before,
+          after,
+          drop);
+    }
+  }
+
+  /*
    * A body resolved on the finest grid has to survive coarsening, otherwise the
    * coarse correction solves a different problem from the one it is correcting.
    * The apertures and volume fractions are coarsened geometrically -- four fine
@@ -732,6 +913,64 @@ int main(int argc, char **argv)
           after,
           totals[1],
           totals[2]);
+    }
+  }
+
+  /*
+   * ---- The hierarchy is as deep as asked for, or as deep as it can be ----
+   *
+   * Coarsening stops when a *local* extent cannot halve, so the depth available
+   * depends on the decomposition and not only on the grid. A setup must
+   * therefore be able to ask for more than can be built without failing, and a
+   * setup asking for less than the grid supports must get what it asked for
+   * rather than the maximum.
+   */
+  {
+    setup(&comm, NOSLIP);
+
+    char reported[4096];
+
+    /* Far more than any decomposition of this grid can give, so this is the
+     * clamped case. */
+    Params.levels = 99;
+    buildHierarchyCapturing(reported, sizeof(reported));
+    int built = mgTestLevels(&Mg);
+
+    CHECK_TRUE(built >= 2 && built < 99,
+        "asking for 99 levels built %d, which is neither clamped nor usable",
+        built);
+
+    if (commIsMaster(&D.comm)) {
+      char want[128];
+      snprintf(want,
+          sizeof(want),
+          "requested 99 levels, the decomposition supports %d",
+          built);
+
+      CHECK_TRUE(strstr(reported, want) != NULL,
+          "the clamp was not reported as \"%s\"; output was \"%s\"",
+          want,
+          reported);
+    }
+
+    /* And a request the decomposition can honour is honoured exactly, not
+     * silently deepened to the maximum. */
+    int asked     = built - 1;
+    Params.levels = asked;
+    buildHierarchyCapturing(reported, sizeof(reported));
+
+    CHECK_TRUE(mgTestLevels(&Mg) == asked,
+        "asked for %d levels on a grid supporting %d and got %d",
+        asked,
+        built,
+        mgTestLevels(&Mg));
+
+    if (commIsMaster(&D.comm)) {
+      CHECK_TRUE(strstr(reported, "the decomposition supports") == NULL,
+          "a request the decomposition can honour still reported a clamp: \"%s\"",
+          reported);
+
+      printf("hierarchy depth: %d available, %d requested and built\n", built, asked);
     }
   }
 

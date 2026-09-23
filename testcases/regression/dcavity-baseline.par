@@ -42,7 +42,7 @@ te         0.5
 dt         0.02
 tau        0.5
 
-levels        3
+levels        5
 presmooth     5
 postsmooth    5
 

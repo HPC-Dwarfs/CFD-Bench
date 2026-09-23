@@ -79,6 +79,11 @@ ${TARGET}: sanity-checks $(BUILD_DIR) .clangd $(SOLVER_SEL) $(OBJ)
 	$(info ===>  LINKING  $(TARGET))
 	$(Q)${LD} ${LFLAGS} -o $(TARGET) $(OBJ) $(LIBS)
 
+# The divergence test has to be able to see a NaN, which -ffast-math -- and
+# icx's default floating-point model -- entitle the compiler to assume away.
+# See src/finite.c; this is the only object built without that assumption.
+$(BUILD_DIR)/finite.o $(TEST_BUILD_DIR)/finite.o: CFLAGS += -fno-finite-math-only
+
 $(BUILD_DIR)/%.o:  %.c $(MAKE_DIR)/include_$(TOOLCHAIN).mk config.mk
 	$(info ===>  COMPILE  $@)
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@

@@ -4,6 +4,8 @@
  * license that can be found in the LICENSE file. */
 #ifndef __SOLVER_H_
 #define __SOLVER_H_
+#include <stdbool.h>
+
 #include "comm.h"
 #include "discretization.h"
 #include "grid.h"
@@ -62,6 +64,51 @@ extern void initSolver(Solver *, Discretization *, Parameter *);
 /* Everything the three solvers set up identically. Each initSolver calls this
  * first and then adds whatever only it needs. */
 extern void solverBaseInit(Solver *s, Discretization *d, Parameter *p);
+
+/*
+ * Whether res is a finite number. Out of line and in its own object, compiled
+ * without the fast-math assumption that nothing ever is anything else; an
+ * inline isfinite() here would be compiled under that assumption and could be
+ * folded to true. See finite.c.
+ */
+extern bool solveResidualIsFinite(double res);
+
+/*
+ * Whether an iteration goes on: the residual is finite, still at or above the
+ * tolerance, and the budget is not spent.
+ *
+ * The finiteness test is not optional. "Continue while res >= epssq" alone
+ * reads a NaN as the tolerance having been met, because a comparison against a
+ * NaN is false whichever way it is written, so a diverged iteration used to
+ * leave its loop and be reported as converged. An infinite residual that is not
+ * a NaN would instead have kept iterating to the limit.
+ *
+ * The residual every solver tests is formed by a global reduction, so a NaN on
+ * one rank reaches all of them and every rank leaves the loop together.
+ */
+static inline bool solveContinues(double res, double epssq, int it, int itermax)
+{
+  return solveResidualIsFinite(res) && (res >= epssq) && (it < itermax);
+}
+
+/*
+ * Report how a solve stopped -- converged, stopped at the iteration limit, or
+ * diverged -- and return the residual the caller should see.
+ *
+ * loopRes is the residual the loop tested, res the one computed from the field
+ * being returned; unit names what the solver counts ("cycles", "iterations").
+ * The converged message is the one every solver printed before, unchanged. A
+ * divergence is reported whether or not the build is verbose, and the value
+ * returned for it is never finite, so a caller can tell it from a converged
+ * solve by the residual alone. Stopping at the limit returns res as it is: the
+ * iterate is still the caller's to use.
+ */
+extern double solveReport(const Solver *s,
+    const char *solver,
+    const char *unit,
+    int it,
+    double loopRes,
+    double res);
 
 
 #if defined(TEST) && defined(SOLVER_cg)

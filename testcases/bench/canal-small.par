@@ -1,0 +1,74 @@
+#==============================================================================
+#   canal-small: benchmark tier. Laminar canal flow, 384x48x48.
+#
+#   A benchmark tier, not a validation setup: it exists to be timed, carries
+#   no baseline, and its flow is not a result. Derived from
+#   ../flow/canal.par, in a 32x4x4 channel rather than 30x4x4 so the
+#   ratio is exactly 8:1:1 and the cells are cubic.
+#   See README.md for the sizing rule.
+#==============================================================================
+
+# What tests/check-bench-tiers.sh certifies: the rank counts this tier is
+# meant for, the multigrid depth it keeps at every one of them, and which
+# limit sets that depth -- the grid, or the body the grid has to represent.
+# bench-ranks       1 8 27
+# bench-min-levels  4
+# bench-bound       grid
+
+name canal
+
+bcLeft    1
+bcRight   3
+bcBottom  1
+bcTop     1
+bcFront   1
+bcBack    1
+
+gx    0.0
+gy    0.0
+gz    0.0
+
+re    100.0
+
+u_init    1.0
+v_init    0.0
+w_init    0.0
+p_init    0.0
+
+# Cubic cells: every extent is the domain length times the same factor.
+xlength    32.0
+ylength    4.0
+zlength    4.0
+imax       384
+jmax       48
+kmax       48
+
+# A fixed step, not an adaptive one: tau 0 bypasses the controller, so every
+# tier of this case runs the same 200 steps whatever its grid or its flow.
+# dt is a power of two so that t accumulates exactly, and te is 199 of them:
+# the loop runs while t <= te, which is 200 steps.
+#   The large tier's diffusive bound, 0.5 Re / (3/h^2) = 0.0072 at h = 1/48,
+#   is the tighter one; 1/512 is under half of it.
+# Why this many steps, measured on one rank of an Apple M2 Pro:
+#   27.6 s for the small tier on one rank. Startup is 0.6 s; the first two
+#   solves take 86 cycles each against 1-11 afterwards: together about a
+#   seventh of the run at 200 steps, against more than half at 100.
+#   Far beyond 200 buys little: with a step this small the pressure barely
+#   changes from one step to the next, and within a few hundred steps every
+#   solve is a single cycle, so a longer run times the solver less, not more.
+te       0.388671875
+dt       0.001953125
+tau      0.0
+
+# levels 5: what the 48-cell extent coarsens to on one rank (48 = 3 * 2^k
+# halves down to 3). More ranks leave fewer; at 27 ranks it is 4,
+# which the depth check certifies.
+levels        5
+presmooth     5
+postsmooth    5
+
+itermax  20000
+eps      0.0001
+omg      1.8
+gamma    0.9
+#==============================================================================

@@ -23,7 +23,7 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TOOLCHAIN=${TOOLCHAIN:-CLANG}
-BIN="$ROOT/CFD-Solver-$TOOLCHAIN"
+BIN="$ROOT/CFD-Bench-$TOOLCHAIN"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

@@ -432,22 +432,65 @@ static void residualField(MultigridType *mg, MgLevelType *lv, double *p, const d
   }
 }
 
+/*
+ * Sweeps the coarsest level is solved with, in each direction.
+ *
+ * The coarsest level is solved rather than relaxed: the correction a cycle
+ * carries upward is only as good as the coarse problem it came from, so a
+ * coarsest level still far from its own solution limits the whole cycle however
+ * many levels sit above it. It used to get presmooth then postsmooth sweeps --
+ * ten in total on the shipped setups, which is a relaxation.
+ *
+ * Applied in each direction, so the total is twice this and the split is even by
+ * construction. That keeps the error propagation a product of the form A^T A,
+ * which is symmetric for any count, and it is what makes the cycle usable as a
+ * preconditioner.
+ *
+ * Fixed rather than iterated to a tolerance. A preconditioner must be a fixed
+ * linear operator, and an inner convergence test would make the work -- and so
+ * the operator -- depend on the residual it was handed.
+ *
+ * 40 chosen by measurement rather than by guess. The residual drop is what one
+ * call to the coarsest solve achieves, measured by tests/checks/multigrid.c on
+ * its own grid, whose coarsest level is 8x4x4; the cycles and wall clock are
+ * SOLVER=mg on sphere-baseline at its shipped three levels, whose coarsest level
+ * is 12x6x6:
+ *
+ *     per-direction sweeps      5      10      20      40      80
+ *     coarse residual drop     27x     55x    203x   2.8e3x  5.2e5x
+ *     cycles on sphere-base     29      16      16       5       5
+ *     wall clock             0.28s   0.16s   0.16s   0.05s   0.05s
+ *
+ * 5 each way is what this level used to get -- presmooth then postsmooth, both 5
+ * on the shipped setups -- and it reproduces the 29 cycles already recorded for
+ * that setup, which is what says the rest of the column is measuring the sweep
+ * count and nothing else.
+ *
+ * The knee is 40. The curve steps twice rather than once, at 10 and at 40, and
+ * flattens for good after 40: past that the coarse level has stopped being what
+ * limits the cycle and more sweeps buy nothing. 80 sweeps of a 12x6x6 grid is
+ * about one and a quarter passes over the 48x24x24 finest level, so the whole
+ * coarse solve costs less than a single fine smoothing sweep.
+ */
+#define MG_COARSE_SWEEPS 40
+
+/*
+ * The coarsest level's solve. Separate from vcycle so that a check driver can
+ * drive it alone and measure what it achieves.
+ */
+static void coarseSolve(MultigridType *mg, MgLevelType *lv, double *p, const double *rhs)
+{
+  smooth(mg, lv, p, rhs, MG_COARSE_SWEEPS, 0);
+  smooth(mg, lv, p, rhs, MG_COARSE_SWEEPS, 1);
+}
+
 static void vcycle(MultigridType *mg, int level, double *p, const double *rhs)
 {
   MgLevelType *levels = mg->level;
   MgLevelType *lv     = &levels[level];
 
   if (level == mg->levels - 1) {
-    /*
-     * Coarsest level: relax hard enough to stand in for a solve, and
-     * symmetrically, since the cycle is only symmetric if every part of it is.
-     * Equal numbers of forward and backward sweeps make the error propagation
-     * a product of the form A^T A, which is symmetric for any sweep count --
-     * the same argument that makes the post-smoother the transpose of the
-     * pre-smoother, applied to a level with nothing below it.
-     */
-    smooth(mg, lv, p, rhs, mg->presmooth, 0);
-    smooth(mg, lv, p, rhs, mg->postsmooth, 1);
+    coarseSolve(mg, lv, p, rhs);
     return;
   }
 
@@ -588,6 +631,37 @@ static double countFluid(MgLevelType *lv)
 void multigridBuild(MultigridType *mg, const MultigridSpecType *spec)
 {
   /*
+   * A depth below one is refused, where a depth above what the decomposition
+   * supports is clamped further down. The two directions are not the same
+   * case: a request too deep can be honoured approximately and reported, since
+   * the setup's author cannot always know how the domain will be divided, but
+   * a request below one names no hierarchy at all -- there is no level to
+   * cycle on, and substituting one would hide a typo in the setup file.
+   */
+  if (spec->levels < 1) {
+    if (commIsMaster(spec->comm)) {
+      fprintf(stderr,
+          "Multigrid: levels is %d. A hierarchy needs at least one level.\n",
+          spec->levels);
+    }
+    exit(EXIT_FAILURE);
+  }
+
+  /* A cycle with no smoother cannot reduce the residual however many cycles it
+   * is given, so it would run to itermax and report a residual as though it
+   * had tried. */
+  if (spec->presmooth < 1 || spec->postsmooth < 1) {
+    if (commIsMaster(spec->comm)) {
+      fprintf(stderr,
+          "Multigrid: presmooth is %d and postsmooth is %d. Each must be at "
+          "least 1, because a cycle without smoothing cannot converge.\n",
+          spec->presmooth,
+          spec->postsmooth);
+    }
+    exit(EXIT_FAILURE);
+  }
+
+  /*
    * The cycle is symmetric only when the two smoothing phases are a transpose
    * pair, and a product of four operators is not the transpose of a product of
    * five. Refused here rather than quietly reconciled: a cycle that is not the
@@ -603,6 +677,20 @@ void multigridBuild(MultigridType *mg, const MultigridSpecType *spec)
           "transpose runs the same number of sweeps.\n",
           spec->presmooth,
           spec->postsmooth);
+    }
+    exit(EXIT_FAILURE);
+  }
+
+  /* Weighted relaxation converges only for a factor strictly between 0 and 2.
+   * Named smoothOmega in the message because the relaxation solvers' omg has
+   * the same bound and is checked separately, and a user told "omega" would
+   * not know which line of the setup to fix. */
+  if (!(spec->smoothOmega > 0.0 && spec->smoothOmega < 2.0)) {
+    if (commIsMaster(spec->comm)) {
+      fprintf(stderr,
+          "Multigrid: smoothOmega is %g. The smoother's relaxation factor must "
+          "lie strictly between 0 and 2, outside which the smoothing diverges.\n",
+          spec->smoothOmega);
     }
     exit(EXIT_FAILURE);
   }
@@ -830,6 +918,13 @@ void mgTestSmooth(MultigridType *mg, int level, double *p, const double *rhs, in
 {
   smooth(mg, &mg->level[level], p, rhs, sweeps, 0);
 }
+
+void mgTestCoarseSolve(MultigridType *mg, double *p, const double *rhs)
+{
+  coarseSolve(mg, &mg->level[mg->levels - 1], p, rhs);
+}
+
+int mgTestCoarseSweeps(void) { return MG_COARSE_SWEEPS; }
 
 int mgTestLevelSolidCount(MultigridType *mg, int level)
 {

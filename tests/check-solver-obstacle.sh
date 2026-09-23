@@ -33,6 +33,36 @@ FREE="$WORK/sphere-free.par"
 # The same setup without the body, for the iteration-count comparison.
 grep -v '^geometryFile' "$PAR" > "$FREE"
 
+# The solve tolerance the setup asks for. Fields are compared against it.
+TOL=$(sed -n 's/^eps  *\([0-9.eE+-]*\).*/\1/p' "$PAR" | head -1)
+
+# And the tolerance the fields being compared are produced at, an order of
+# magnitude below it.
+#
+# eps bounds a mean square residual over the fluid cells; tools/fieldcmp reports
+# the largest pointwise difference. Nothing relates the two, so a solver that
+# takes larger steps crosses the residual threshold from further out and shows a
+# larger pointwise difference while being no less converged. Comparing each
+# solver at the point it happened to stop therefore measures how the solvers
+# stop as much as what they converge to, and rejects faster iterations that are
+# demonstrably correct -- multigrid at the depth its grid supports lands 5.1e-04
+# from rb at eps = 1e-04, and 6.5e-06 once both are converged.
+#
+# This is not a loosening: the comparison tolerance below is unchanged. What
+# changes is that both sides are converged past it before it is applied, which
+# is what the requirement always said and what this script did not do.
+TIGHT="$WORK/sphere-tight.par"
+TIGHT_TOL=$(awk -v t="$TOL" 'BEGIN { printf "%.17g", t / 10.0 }')
+sed "s/^eps  *[0-9.eE+-]*/eps           $TIGHT_TOL/" "$PAR" > "$TIGHT"
+
+# A silent failure here would leave the gate comparing at the old tolerance and
+# reporting that everything agrees, which is the failure this whole change is
+# about, so the substitution is checked rather than assumed.
+if [ "$(sed -n 's/^eps  *\([0-9.eE+-]*\).*/\1/p' "$TIGHT" | head -1)" != "$TIGHT_TOL" ]; then
+    echo "check-solver-obstacle.sh: could not set eps to $TIGHT_TOL in $TIGHT" >&2
+    exit 2
+fi
+
 status=0
 
 # Iterations or cycles the last solve of a run took.
@@ -51,6 +81,12 @@ is_krylov() {
     esac
 }
 
+# Levels a multilevel solver reports building, empty for a solver that builds no
+# hierarchy.
+levels_built() {
+    sed -n 's/.*solver with \([0-9]*\) levels.*/\1/p' "$1" | head -1
+}
+
 printf '========== solvers agree with a body ==========\n'
 
 for solver in rb rbc mg cg; do
@@ -60,11 +96,15 @@ for solver in rb rbc mg cg; do
         exit 2
     fi
 
+    # The field the cross-solver comparison judges, converged past the tolerance
+    # it is judged at. The iteration-count runs below stay at the setup's own
+    # eps: what they measure is what the body costs a solver against the same
+    # setup without it, which is a comparison of a solver against itself.
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver.dump" \
-        "./CFD-Solver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver.log" 2>&1 )
+        "./CFD-Bench-$TOOLCHAIN-test" "$TIGHT" > "$WORK/$solver.log" 2>&1 )
 
-    ( cd "$ROOT" && "./CFD-Solver-$TOOLCHAIN" "$PAR" > "$WORK/$solver-plain.log" 2>&1 )
-    ( cd "$ROOT" && "./CFD-Solver-$TOOLCHAIN" "$FREE" > "$WORK/$solver-free.log" 2>&1 )
+    ( cd "$ROOT" && "./CFD-Bench-$TOOLCHAIN" "$PAR" > "$WORK/$solver-plain.log" 2>&1 )
+    ( cd "$ROOT" && "./CFD-Bench-$TOOLCHAIN" "$FREE" > "$WORK/$solver-free.log" 2>&1 )
 
     withBody=$(iterations "$WORK/$solver-plain.log")
     without=$(iterations "$WORK/$solver-free.log")
@@ -85,9 +125,6 @@ for solver in rb rbc mg cg; do
     fi
 done
 
-# The solve tolerance the setup asks for; fields are compared against it.
-TOL=$(sed -n 's/^eps  *\([0-9.eE+-]*\).*/\1/p' "$PAR" | head -1)
-
 for solver in rbc mg cg; do
     printf -- '-- rb against %s\n' "$solver"
     if "$ROOT/tools/fieldcmp" "$WORK/rb.dump" "$WORK/$solver.dump" "$TOL"; then
@@ -100,19 +137,32 @@ done
 
 printf '\n========== the answer does not depend on the rank count ==========\n'
 
+# This section stays at the setup's own eps, deliberately.
+#
+# The stopping artifact the section above converges away is a cross-solver one:
+# it appears because two different iterations are compared at the point each
+# crossed a residual threshold. Here each solver is compared against itself on a
+# different rank count, so both sides stop by the same rule after the same
+# number of iterations -- the equal counts below are asserted -- and there is no
+# such artifact to remove. Running these at a tighter tolerance would cost time
+# and change nothing the section tests.
+
 for solver in rb rbc mg cg; do
     make -C "$ROOT" SOLVER="$solver" tests >/dev/null 2>&1
 
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver-r1.dump" \
-        "./CFD-Solver-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver-r1.log" 2>&1 )
+        "./CFD-Bench-$TOOLCHAIN-test" "$PAR" > "$WORK/$solver-r1.log" 2>&1 )
     ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/$solver-rn.dump" \
-        "$MPIRUN" -n "$RANKS" "./CFD-Solver-$TOOLCHAIN-test" "$PAR" \
+        "$MPIRUN" -n "$RANKS" "./CFD-Bench-$TOOLCHAIN-test" "$PAR" \
         > "$WORK/$solver-rn.log" 2>&1 )
 
     one=$(iterations "$WORK/$solver-r1.log")
     many=$(iterations "$WORK/$solver-rn.log")
 
     printf -- '-- %s: %s on 1 rank, %s on %s ranks\n' "$solver" "$one" "$many" "$RANKS"
+
+    oneLevels=$(levels_built "$WORK/$solver-r1.log")
+    manyLevels=$(levels_built "$WORK/$solver-rn.log")
 
     if is_krylov "$solver"; then
         drift=$((one - many))
@@ -121,6 +171,29 @@ for solver in rb rbc mg cg; do
         if [ "$drift" -gt 1 ]; then
             printf '%s: FAILED, iteration count moved by %s with the rank count, more than the one a Krylov solver is allowed\n' \
                 "$solver" "$drift"
+            status=1
+        fi
+    elif [ -n "$oneLevels" ] && [ -n "$manyLevels" ] && [ "$oneLevels" != "$manyLevels" ]; then
+        # A multilevel solver that built different hierarchies on the two rank
+        # counts is not running the same iteration, so its counts are not
+        # comparable and equality is the wrong thing to require.
+        #
+        # Coarsening stops when a *local* extent cannot halve, so the depth
+        # available depends on how the domain was divided. A setup asking for
+        # the depth its grid supports therefore gets fewer levels on a coarse
+        # decomposition -- sphere-baseline builds 4 levels on 1 rank and 3 on 8
+        # -- and a shallower hierarchy legitimately takes more cycles.
+        #
+        # What is required instead is that the solver said so, which is what
+        # makes a shallow hierarchy apparent rather than something to infer from
+        # poor convergence. The field comparison below is unchanged and is what
+        # says the two runs still solved the same system.
+        printf -- '   %s built %s levels on 1 rank and %s on %s; counts not compared\n' \
+            "$solver" "$oneLevels" "$manyLevels" "$RANKS"
+
+        if ! grep -q 'the decomposition supports' "$WORK/$solver-rn.log"; then
+            printf '%s: FAILED, built %s levels instead of %s without reporting it\n' \
+                "$solver" "$manyLevels" "$oneLevels"
             status=1
         fi
     elif [ "$one" != "$many" ]; then
@@ -163,13 +236,13 @@ printf '\n========== the compressed layout agrees with the natural one =========
 # list entry carries, which is the thing being checked here.
 serialBuild() {
     make -C "$ROOT" ENABLE_MPI=false BUILD_DIR=./build/SERIAL SOLVER="$1" \
-        TARGET="CFD-Solver-SERIAL-$1" "CFD-Solver-SERIAL-$1-test" >/dev/null 2>&1
+        TARGET="CFD-Bench-SERIAL-$1" "CFD-Bench-SERIAL-$1-test" >/dev/null 2>&1
 }
 
 if serialBuild rb && serialBuild rbc; then
     for solver in rb rbc; do
         ( cd "$ROOT" && NUSIF_FIELD_DUMP="$WORK/serial-$solver.dump" \
-            "./CFD-Solver-SERIAL-$solver-test" "$PAR" > "$WORK/serial-$solver.log" 2>&1 )
+            "./CFD-Bench-SERIAL-$solver-test" "$PAR" > "$WORK/serial-$solver.log" 2>&1 )
     done
 
     a=$(iterations "$WORK/serial-rb.log")
@@ -183,8 +256,8 @@ if serialBuild rb && serialBuild rbc; then
         status=1
     fi
 
-    rm -f "$ROOT/CFD-Solver-SERIAL-rb" "$ROOT/CFD-Solver-SERIAL-rbc" \
-        "$ROOT/CFD-Solver-SERIAL-rb-test" "$ROOT/CFD-Solver-SERIAL-rbc-test"
+    rm -f "$ROOT/CFD-Bench-SERIAL-rb" "$ROOT/CFD-Bench-SERIAL-rbc" \
+        "$ROOT/CFD-Bench-SERIAL-rb-test" "$ROOT/CFD-Bench-SERIAL-rbc-test"
 else
     echo "FAILED: could not build the serial variants"
     status=1

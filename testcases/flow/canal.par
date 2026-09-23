@@ -50,7 +50,8 @@ tau      0.5     # safety factor for time stepsize control (<0 constant delt)
 # Multigrid data:
 # ---------
 
-levels        3         # Multigrid levels (should be >= 1)
+# Four, which is what 200x40x40 coarsens to: 40 halves to 5 and stops there.
+levels        4         # Multigrid levels (should be >= 1)
 presmooth     5         # Pre-smoothning iterations
 postsmooth    5         # Post-smoothning iterations
 

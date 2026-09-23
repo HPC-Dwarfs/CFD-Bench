@@ -45,7 +45,9 @@ tau      0.5		# safety factor for time stepsize control (<0 constant delt)
 # Multigrid data:
 # ---------
 
-levels        4         # Multigrid levels (should be >= 1)
+# Seven, which is what a 128^3 grid coarsens to. There is no obstacle here, so
+# nothing stops being represented on the way down.
+levels        7         # Multigrid levels (should be >= 1)
 presmooth     5         # Pre-smoothning iterations
 postsmooth    5         # Post-smoothning iterations
 

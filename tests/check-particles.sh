@@ -21,7 +21,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TOOLCHAIN=${TOOLCHAIN:-CLANG}
 MPIRUN=${MPIRUN:-mpirun}
 RANKS=${RANKS:-4}
-BIN="$ROOT/CFD-Solver-$TOOLCHAIN"
+BIN="$ROOT/CFD-Bench-$TOOLCHAIN"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

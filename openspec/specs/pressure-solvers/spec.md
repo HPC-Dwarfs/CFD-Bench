@@ -10,10 +10,17 @@ Defines what the pressure solvers must deliver when the domain contains embedded
 
 Every pressure solver the project ships SHALL solve the same embedded-boundary pressure system, with the same treatment of closed faces and solid cells. Given the same setup and a sufficiently tight tolerance, the solvers SHALL produce the same pressure field.
 
+Agreement between solvers SHALL be judged between converged fields. Each solver SHALL be converged to a tolerance tighter than the one their agreement is judged at, because a solver's tolerance bounds a mean square residual over the domain and does not bound the largest pointwise difference between two fields. Comparing two solvers at the tolerance they each stopped at measures how they stop as much as what they converge to, and a faster iteration that takes larger steps can cross that threshold from further away while being no less correct.
+
 #### Scenario: Solvers agree
 
-- **WHEN** the same setup with an obstacle is solved by each shipped solver, each converged to a tight tolerance
-- **THEN** the resulting pressure fields agree with one another to within that tolerance
+- **WHEN** the same setup with an obstacle is solved by each shipped solver, each converged well past the tolerance the comparison is made at
+- **THEN** the resulting pressure fields agree with one another to within the comparison tolerance
+
+#### Scenario: A faster solver is not penalised for stopping sooner
+
+- **WHEN** two solvers converge to the same problem, one taking markedly fewer or larger steps than the other
+- **THEN** their converged fields agree, and neither is reported as disagreeing on account of where its iteration crossed the stopping threshold
 
 #### Scenario: Obstacle is visible to every solver
 
@@ -129,10 +136,181 @@ The correction SHALL be confined to cells with nonzero volume fraction. A coarse
 
 Multigrid SHALL repeat cycles until the configured tolerance is reached or the configured iteration limit is exhausted, and SHALL report the number of cycles used.
 
+Reaching the tolerance SHALL mean a finite residual below it. A residual that is
+not a finite number does not reach any tolerance, and SHALL be reported as a
+divergence rather than as a solve that finished early.
+
 #### Scenario: Multigrid honours the tolerance
 
 - **WHEN** a setup is solved by multigrid with a given tolerance and iteration limit
 - **THEN** the solve either reaches that tolerance or stops at the limit, and the cycle count is reported
+
+#### Scenario: A non-finite residual is not a tolerance being met
+
+- **WHEN** a multigrid solve's residual becomes not a number
+- **THEN** the solve is reported as diverged rather than as having reached the tolerance in the cycles taken so far
+
+### Requirement: The coarsest level is solved
+
+The coarsest level of a multilevel hierarchy SHALL be solved, not merely
+relaxed. The correction a cycle carries upward is only as good as the coarse
+problem it came from, so a coarsest level that is still far from its own
+solution limits the whole cycle regardless of how many levels sit above it.
+
+The work SHALL be bounded and independent of the residual, so that a cycle used
+as a preconditioner remains a fixed linear operator.
+
+#### Scenario: The coarsest level reaches its own solution
+
+- **WHEN** the coarsest level's problem is solved as part of a cycle
+- **THEN** its residual is reduced by orders of magnitude, not by the factor a fixed handful of relaxation sweeps would achieve
+
+#### Scenario: The coarse solve does not vary with the residual
+
+- **WHEN** the coarsest level is solved for right-hand sides of widely differing magnitude
+- **THEN** each solve performs the same operations, with no inner convergence test
+
+#### Scenario: A deeper hierarchy does not need a stronger coarse solve to converge
+
+- **WHEN** the same problem is solved with the hierarchy the grid supports and with one level fewer
+- **THEN** both converge, and the deeper one takes no more cycles
+
+### Requirement: A multilevel solver uses the depth available to it
+
+A multilevel solver SHALL build the hierarchy its grid and its decomposition
+allow, up to the depth the setup requests. Where the requested depth cannot be
+built, the solver SHALL report the depth it actually built rather than failing,
+since coarsening is limited by the local extents and therefore by how the domain
+was divided.
+
+A setup SHALL NOT be configured with a depth materially shallower than its grid
+and its body support, because a shallow hierarchy leaves the coarsest problem
+large and the cycle weak.
+
+Where coarsening would stop representing an embedded body, the level at which
+that happens bounds the depth worth building, since a coarse correction computed
+on a domain that no longer contains the body is not a correction to the problem
+being solved. A setup SHALL be configured to the shallower of the two limits,
+and SHALL record which limit binds it.
+
+#### Scenario: Requested depth exceeds what the decomposition allows
+
+- **WHEN** a setup requests more levels than the local extents can be halved to provide
+- **THEN** the solver builds as many as it can, reports the number it built, and solves to the requested tolerance
+
+#### Scenario: Depth is reported, not assumed
+
+- **WHEN** a multilevel solver initializes
+- **THEN** the number of levels it built is visible in its output, so a shallow hierarchy is apparent rather than inferred from poor convergence
+
+#### Scenario: A body bounds the depth before the grid does
+
+- **WHEN** a setup contains a body that coarsening stops representing at a shallower level than the grid stops halving at
+- **THEN** the setup is configured to the depth at which the body is still represented, rather than to the depth the grid alone would allow
+
+#### Scenario: Depth differing with the decomposition is reported rather than compared
+
+- **WHEN** the same setup is solved on two rank counts whose local extents allow different depths
+- **THEN** each run reports the depth it built, their converged fields agree, and their iteration counts are not required to match, because two hierarchies of different depth are two different iterations
+
+### Requirement: A setup that cannot produce a correct solve is refused
+
+A setup value that makes a correct solve impossible SHALL be refused at
+initialization, naming the parameter and the value it was given, before any time
+step is executed. This is the treatment an unsupported boundary code and an
+unknown preconditioner already receive, and for the same reason: a run that
+cannot produce a right answer is worse than no run, because its output is
+indistinguishable from a good one.
+
+This applies to a value that is outside the range in which the method works at
+all, not to one that merely makes it slow. In particular:
+
+- a multilevel hierarchy SHALL be at least one level deep;
+- a cycle SHALL apply at least one smoothing sweep on each side of its coarse
+  correction, since a cycle with no smoother cannot converge however many cycles
+  it is given;
+- a relaxation factor SHALL lie strictly between zero and two, which is the
+  range in which the relaxation it scales converges. This binds every relaxation
+  factor a setup carries, whether it drives a solver or a smoother.
+
+A value that is merely larger than the problem can use SHALL NOT be refused
+where the solver can adapt to it and report what it did — a requested hierarchy
+depth greater than the decomposition supports is clamped and reported, and
+remains so.
+
+#### Scenario: A hierarchy depth below one is refused
+
+- **WHEN** a setup requests fewer than one multigrid level
+- **THEN** the solver aborts at initialization naming the parameter and the value, rather than building a hierarchy it cannot cycle on
+
+#### Scenario: A cycle with no smoother is refused
+
+- **WHEN** a setup requests zero or fewer smoothing sweeps on either side of the coarse correction
+- **THEN** the solver aborts at initialization, rather than running a cycle that cannot reduce the residual
+
+#### Scenario: A relaxation factor outside the convergent range is refused
+
+- **WHEN** a setup gives a relaxation factor that is zero or negative, or two or greater, for either a solver or a smoother
+- **THEN** the solver aborts at initialization naming the parameter and the value
+
+#### Scenario: A depth the decomposition cannot provide is still accepted
+
+- **WHEN** a setup requests more levels than the local extents can be halved to provide
+- **THEN** the solver builds as many as it can and reports the number built, as before, because it can honour the request approximately and say so
+
+#### Scenario: Every shipped setup is accepted
+
+- **WHEN** each setup the project ships is run
+- **THEN** none of them is refused, so the refusals describe values no correct setup uses
+
+### Requirement: A solve reports how it stopped
+
+A solve SHALL end in one of three distinguishable outcomes — it converged, it
+stopped at the iteration limit, or it diverged — and SHALL report which. The
+three are not interchangeable and SHALL NOT be reported in the same form.
+
+Divergence SHALL be judged on the residual being a finite number. This is a
+requirement about the convergence test and not only about the message: a test of
+the form "continue while the residual exceeds the tolerance" treats a residual
+that is not a number as having met the tolerance, because a comparison against a
+NaN is false whichever way it is written. A solver whose iteration has diverged
+therefore leaves that test, reports the iteration count it happened to reach, and
+returns a field of NaNs as though it had converged — the one outcome a solver
+must never produce, since nothing downstream can tell it from a correct run.
+
+A diverged solve SHALL stop the run with a failing status, and no field output
+SHALL be produced from it.
+
+Stopping at the iteration limit SHALL NOT stop the run. It is a legitimate
+configuration — a deliberately bounded budget, or a problem being studied
+precisely because it does not converge — and the iterate SHALL still be returned
+to the caller. What changes is only that it is reported as having stopped at the
+limit rather than as having converged.
+
+#### Scenario: A diverged solve fails
+
+- **WHEN** a solve's residual becomes infinite or not a number
+- **THEN** the solver reports divergence and the iteration at which it occurred, and the run exits with a failing status
+
+#### Scenario: A field of NaNs is never written as output
+
+- **WHEN** an iteration diverges
+- **THEN** no field output is produced from that run, so a diverged run cannot be mistaken for a converged one by anything reading the results
+
+#### Scenario: Exhausting the iteration limit is reported but not fatal
+
+- **WHEN** a solve reaches its iteration limit with the residual still above the tolerance
+- **THEN** the solver reports that it stopped at the limit and the residual it reached, distinctly from having converged, and returns the iterate so that a caller studying a non-converging problem still receives it
+
+#### Scenario: Every solver is held to it
+
+- **WHEN** any shipped solver diverges
+- **THEN** it reports the divergence, so the guarantee does not depend on which solver variant the binary was built with
+
+#### Scenario: A converging solve is unaffected
+
+- **WHEN** a solve reaches its tolerance
+- **THEN** it reports the same iteration count and residual it reported before, and its converged field is unchanged
 
 ### Requirement: The pressure boundary condition follows the setup
 
@@ -214,17 +392,61 @@ A solver whose iterates do not depend on a global reduction SHALL produce the sa
 - **WHEN** the same obstacle setup is solved on 1 rank and on 8 ranks by a Krylov solver
 - **THEN** the iteration counts differ by at most one
 
+### Requirement: A setup intended for scaling measurements keeps its hierarchy
+
+A setup shipped for measuring performance at scale SHALL be sized so that the
+multilevel hierarchy retains a useful depth at every rank count it is intended
+for. Coarsening is limited by the local extents, so depth is a property of the
+grid and the decomposition together, and a grid chosen without regard to the
+rank counts it will meet can lose its hierarchy entirely.
+
+This SHALL be checked rather than assumed. A hierarchy that collapses does not
+fail: it converges more slowly and reports nothing unusual, so a benchmark run
+on a collapsed hierarchy measures a smoother and presents it as multigrid.
+
+#### Scenario: Depth survives the decomposition
+
+- **WHEN** a setup intended for scaling is divided across any rank count it targets
+- **THEN** the hierarchy built on each rank still has at least the depth the setup claims, and the solver reports the depth it built
+
+#### Scenario: A grid that cannot be coarsened is rejected as a benchmark
+
+- **WHEN** a setup intended for scaling has an extent that stops being divisible by two before the depth it targets
+- **THEN** that is reported as a defect of the setup, rather than being discovered later as poor convergence
+
+#### Scenario: The claimed depth is verified against the solver
+
+- **WHEN** the depth a setup is expected to reach is computed from its grid and rank count
+- **THEN** it agrees with the depth the solver reports at the rank counts where that can be run directly, so the expectation is checked against the implementation rather than restating it
+
+### Requirement: A scaling measurement performs a fixed amount of work
+
+A setup shipped for measuring performance SHALL perform an amount of work that
+depends on its grid and on nothing else. The number of time steps SHALL be fixed
+by configuration rather than chosen by an adaptive controller, so that two sizes
+of the same case differ only in the cells they cover.
+
+#### Scenario: Two sizes of the same case are comparable
+
+- **WHEN** the same case is run at two grid sizes intended for comparison
+- **THEN** both execute the same number of time steps, so the difference in run time is attributable to the problem size
+
+#### Scenario: The step count does not depend on the flow
+
+- **WHEN** a setup intended for scaling is run
+- **THEN** the time step is the one its configuration states, not one derived from the velocity field, and the run executes the number of steps that configuration implies
+
 ### Requirement: A Krylov pressure solver is shipped
 
 The project SHALL ship a conjugate gradient pressure solver as a first-class
 solver variant, selected the same way as the relaxation solvers, and subject to
 the same requirement that every shipped solver solves the same embedded-boundary
-system and agrees with the others to the solve tolerance.
+system and agrees with the others once converged.
 
 #### Scenario: Krylov solver agrees with the relaxation solvers
 
-- **WHEN** a setup containing an obstacle is solved by the Krylov solver and by each relaxation solver, each converged to a tight tolerance
-- **THEN** all of the resulting pressure fields agree with one another to within that tolerance
+- **WHEN** a setup containing an obstacle is solved by the Krylov solver and by each relaxation solver, each converged well past the tolerance the comparison is made at
+- **THEN** all of the resulting pressure fields agree with one another to within the comparison tolerance
 
 #### Scenario: Krylov solver honours the tolerance
 
@@ -306,16 +528,25 @@ preconditioner is demonstrably doing work rather than merely being applied.
 
 ### Requirement: The multilevel cycle is a symmetric operator
 
-The multilevel cycle SHALL be a symmetric linear operator on the fluid
-unknowns, so that a Krylov method preconditioned by it remains the method it
-claims to be. Every part of the cycle SHALL be symmetric: the smoothing applied
-after the coarse correction SHALL be the transpose of the smoothing applied
-before it, the coarsest level SHALL be solved by a symmetric process, and the
-transfer operators SHALL be a transpose pair.
+A multilevel cycle used to precondition a Krylov solver SHALL be a symmetric
+linear operator on the fluid unknowns, so that the method preconditioned by it
+remains the method it claims to be. Every part of that cycle SHALL be symmetric:
+the smoothing applied after the coarse correction SHALL be the transpose of the
+smoothing applied before it, the coarsest level SHALL be solved by a symmetric
+process, and the transfer operators SHALL be a transpose pair.
+
+A cycle used directly as a solver SHALL NOT be required to be symmetric. Nothing
+about a stationary iteration needs it, and the constraints that buy it — a
+restriction that is the transpose of prolongation rather than the cheaper
+average, equal smoothing counts, and a reversed smoother that is unstable at
+relaxation factors the forward one tolerates — cost that solver convergence and
+work per cycle. Where the project ships both, each SHALL be identified by which
+of the two it is, and the symmetric one SHALL remain available unchanged to the
+preconditioner.
 
 #### Scenario: The cycle is symmetric
 
-- **WHEN** one cycle is applied from a zero initial guess to arbitrary right-hand sides `x` and `y`, over the fluid unknowns
+- **WHEN** one cycle of the preconditioning shape is applied from a zero initial guess to arbitrary right-hand sides `x` and `y`, over the fluid unknowns
 - **THEN** `x` applied to the cycle of `y` equals `y` applied to the cycle of `x`, to machine precision
 
 #### Scenario: The cycle is symmetric with a body present
@@ -325,8 +556,13 @@ transfer operators SHALL be a transpose pair.
 
 #### Scenario: Smoothing is reversed around the coarse correction
 
-- **WHEN** the cycle smooths before and after the coarse correction
+- **WHEN** the preconditioning cycle smooths before and after the coarse correction
 - **THEN** the second pass visits the unknowns in the reverse of the order the first pass used
+
+#### Scenario: The solver's cycle converges whether or not it is symmetric
+
+- **WHEN** a multilevel solver runs a cycle shape that is not constrained to be symmetric
+- **THEN** it converges to the same field the symmetric shape converges to, to the solve tolerance, and reports the cycles it took
 
 ### Requirement: A multigrid preconditioner is shipped
 

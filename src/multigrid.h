@@ -145,6 +145,10 @@ extern void mgTestResidualField(
 extern void mgTestVcycle(MultigridType *mg, double *p, const double *rhs);
 extern void mgTestSmooth(
     MultigridType *mg, int level, double *p, const double *rhs, int sweeps);
+/* The coarsest level's solve on its own, and the sweep count it runs in each
+ * direction, so a driver can check that it solves rather than relaxes. */
+extern void mgTestCoarseSolve(MultigridType *mg, double *p, const double *rhs);
+extern int mgTestCoarseSweeps(void);
 /* Solid cells and surface-list length at one level, for checking that the
  * coarsened geometry still represents the body. */
 extern int mgTestLevelSolidCount(MultigridType *mg, int level);
