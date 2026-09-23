@@ -292,6 +292,24 @@ The two setups that reference a voxel volume need it generated first:
 tools/make-geometry.sh
 ```
 
+### Benchmark tiers
+
+`testcases/bench/` holds setups for timing rather than for physics: `dcavity`,
+`karman` and `canal`, each in a small, medium and large tier aimed at up to 27,
+216 and 1728 ranks.
+
+```sh
+mpirun -n 8 ./CFD-Bench-CLANG testcases/bench/karman-small.par
+```
+
+Their grids are sized so the multigrid hierarchy survives the decomposition at
+the rank counts they target -- extents of the form `3 * 2^k`, because a power of
+two divided across 6 or 12 ranks goes odd and loses its hierarchy -- and every
+tier runs a fixed 200 steps, so the sizes of one case differ only in cells. They
+carry no baselines: they exist to be timed, not compared against a stored field.
+`testcases/bench/README.md` has the sizing rule, and
+`tests/check-bench-tiers.sh` certifies it.
+
 To plot the pressure solver residual as a function of iteration:
 
 ```sh
@@ -430,6 +448,7 @@ The pieces can also be run on their own:
 | `tests/check-schaefer-turek.sh` | drag, lift and Strouhal against their published ranges |
 | `tests/check-particles.sh` | particle output, and that it does not depend on the rank count |
 | `tests/record-baseline.sh [-v]` | record or verify the field baselines |
+| `tests/check-bench-tiers.sh` | the benchmark tiers keep their multigrid depth at their target rank counts (not in `run-all.sh`) |
 
 Baselines and test geometry are generated, not committed; `record-baseline.sh`
 and `tests/make-geom.sh` rebuild them.

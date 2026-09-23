@@ -1,0 +1,72 @@
+#==============================================================================
+#   dcavity-large: benchmark tier. Driven cavity, 192x192x192.
+#
+#   A benchmark tier, not a validation setup: it exists to be timed, carries
+#   no baseline, and its flow is not a result. Derived from
+#   ../flow/dcavity.par, whose domain is already cubic.
+#   See README.md for the sizing rule.
+#==============================================================================
+
+# What tests/check-bench-tiers.sh certifies: the rank counts this tier is
+# meant for, the multigrid depth it keeps at every one of them, and which
+# limit sets that depth -- the grid, or the body the grid has to represent.
+# bench-ranks       1 8 27 64 216 512 1728
+# bench-min-levels  4
+# bench-bound       grid
+
+name dcavity
+
+bcLeft    1
+bcRight   1
+bcBottom  1
+bcTop     1
+bcFront   1
+bcBack    1
+
+gx    0.0
+gy    0.0
+gz    0.0
+
+re    1000.0
+
+u_init    0.0
+v_init    0.0
+w_init    0.0
+p_init    0.0
+
+# Cubic cells: every extent is the domain length times the same factor.
+xlength    1.0
+ylength    1.0
+zlength    1.0
+imax       192
+jmax       192
+kmax       192
+
+# A fixed step, not an adaptive one: tau 0 bypasses the controller, so every
+# tier of this case runs the same 200 steps whatever its grid or its flow.
+# dt is a power of two so that t accumulates exactly, and te is 199 of them:
+# the loop runs while t <= te, which is 200 steps.
+#   The large tier's diffusive bound, 0.5 Re / (3/h^2) = 0.0045 at h = 1/192,
+#   is the tighter one; 1/512 is under half of it.
+# Why this many steps, measured on one rank of an Apple M2 Pro:
+#   1.5 s for the small tier on one rank, 0.1 s of it startup; the first
+#   solve is 4 cycles and the rest 1-2, so startup is under a tenth of the run.
+#   Far beyond 200 buys little: with a step this small the pressure barely
+#   changes from one step to the next, and within a few hundred steps every
+#   solve is a single cycle, so a longer run times the solver less, not more.
+te       0.388671875
+dt       0.001953125
+tau      0.0
+
+# levels 7: what the 192-cell extent coarsens to on one rank (192 = 3 * 2^k
+# halves down to 3). More ranks leave fewer; at 1728 ranks it is 4,
+# which the depth check certifies.
+levels        7
+presmooth     5
+postsmooth    5
+
+itermax  20000
+eps      0.001
+omg      1.8
+gamma    0.9
+#==============================================================================

@@ -85,6 +85,27 @@ change said 384³ for the large cavity; that reaches five levels at 1728 ranks
 rather than four, at eight times the memory — 56.6 M cells against 7.1 M. Four
 levels is the stated threshold, so 192 is the size the rule gives.
 
+**The body bounds one tier below the threshold.** The grid rule is not the only
+limit: the pressure-solvers spec also bounds depth at the level where coarsening
+stops representing an embedded body, and requires a setup to take the shallower
+of the two and say which binds. Measured with the `karman` cylinder
+(`cylinder-z:5.0,4.0,1.0`, twelve cells across at the small tier):
+
+```
+  karman tier     grid allows (P=1)   body represented through   at target P
+  192x48x48       5 levels            level 2 -> 3 levels        3 (body)
+  384x96x96       6 levels            level 3 -> 4 levels        4
+  768x192x192     7 levels            level 4 -> 5 levels        4 (grid)
+```
+
+`karman-small` is therefore configured for three levels and records that the
+body binds it. Enlarging the cylinder would change the flow the case is named
+after, and dropping the tier would leave `karman` with nothing quick to run; a
+tier whose coarsest level cannot see the body would measure a correction to a
+different problem. So each tier states the depth it claims at its targets and
+which limit sets it, and the check certifies that claim: four levels unless the
+tier says the body binds it.
+
 ### 2. Extents of the form `3 * 2^k`, not `2^k`
 
 The counter-intuitive part, and the reason to write the rule down.
