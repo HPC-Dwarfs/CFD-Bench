@@ -631,6 +631,37 @@ static double countFluid(MgLevelType *lv)
 void multigridBuild(MultigridType *mg, const MultigridSpecType *spec)
 {
   /*
+   * A depth below one is refused, where a depth above what the decomposition
+   * supports is clamped further down. The two directions are not the same
+   * case: a request too deep can be honoured approximately and reported, since
+   * the setup's author cannot always know how the domain will be divided, but
+   * a request below one names no hierarchy at all -- there is no level to
+   * cycle on, and substituting one would hide a typo in the setup file.
+   */
+  if (spec->levels < 1) {
+    if (commIsMaster(spec->comm)) {
+      fprintf(stderr,
+          "Multigrid: levels is %d. A hierarchy needs at least one level.\n",
+          spec->levels);
+    }
+    exit(EXIT_FAILURE);
+  }
+
+  /* A cycle with no smoother cannot reduce the residual however many cycles it
+   * is given, so it would run to itermax and report a residual as though it
+   * had tried. */
+  if (spec->presmooth < 1 || spec->postsmooth < 1) {
+    if (commIsMaster(spec->comm)) {
+      fprintf(stderr,
+          "Multigrid: presmooth is %d and postsmooth is %d. Each must be at "
+          "least 1, because a cycle without smoothing cannot converge.\n",
+          spec->presmooth,
+          spec->postsmooth);
+    }
+    exit(EXIT_FAILURE);
+  }
+
+  /*
    * The cycle is symmetric only when the two smoothing phases are a transpose
    * pair, and a product of four operators is not the transpose of a product of
    * five. Refused here rather than quietly reconciled: a cycle that is not the
@@ -646,6 +677,20 @@ void multigridBuild(MultigridType *mg, const MultigridSpecType *spec)
           "transpose runs the same number of sweeps.\n",
           spec->presmooth,
           spec->postsmooth);
+    }
+    exit(EXIT_FAILURE);
+  }
+
+  /* Weighted relaxation converges only for a factor strictly between 0 and 2.
+   * Named smoothOmega in the message because the relaxation solvers' omg has
+   * the same bound and is checked separately, and a user told "omega" would
+   * not know which line of the setup to fix. */
+  if (!(spec->smoothOmega > 0.0 && spec->smoothOmega < 2.0)) {
+    if (commIsMaster(spec->comm)) {
+      fprintf(stderr,
+          "Multigrid: smoothOmega is %g. The smoother's relaxation factor must "
+          "lie strictly between 0 and 2, outside which the smoothing diverges.\n",
+          spec->smoothOmega);
     }
     exit(EXIT_FAILURE);
   }

@@ -6,7 +6,10 @@
  * Not named solver-base.c on purpose: the Makefile treats solver-*.c as the
  * mutually exclusive solver variants and links exactly one of them.
  */
+#include <math.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "profiler.h"
 #include "timing.h"
@@ -315,6 +318,20 @@ void solverBaseInit(Solver *s, Discretization *d, Parameter *p)
   s->comm     = &d->comm;
   s->problem  = p->name;
 
+  /* Every variant passes through here, so this is the one place omg can be
+   * checked for all of them. Successive over-relaxation converges only for a
+   * factor strictly between 0 and 2; outside it the iteration diverges, and
+   * the run would carry on with a field of NaNs. */
+  if (!(p->omg > 0.0 && p->omg < 2.0)) {
+    if (commIsMaster(s->comm)) {
+      fprintf(stderr,
+          "Solver: omg is %g. The relaxation factor must lie strictly between 0 "
+          "and 2, outside which the relaxation diverges.\n",
+          p->omg);
+    }
+    exit(EXIT_FAILURE);
+  }
+
   s->Ax       = d->Ax;
   s->Ay       = d->Ay;
   s->Az       = d->Az;
@@ -357,6 +374,44 @@ void solverBaseInit(Solver *s, Discretization *d, Parameter *p)
 
   commReduceAll(&fluid, SUM);
   s->fluidCells = (fluid > 0.0) ? fluid : 1.0;
+}
+
+double solveReport(const Solver *s,
+    const char *solver,
+    const char *unit,
+    int it,
+    double loopRes,
+    double res)
+{
+  if (!solveResidualIsFinite(loopRes) || !solveResidualIsFinite(res)) {
+    if (commIsMaster(s->comm)) {
+      fprintf(stderr,
+          "%s diverged after %d %s: the residual is %e, not a finite number.\n",
+          solver,
+          it,
+          unit,
+          solveResidualIsFinite(loopRes) ? res : loopRes);
+    }
+    return solveResidualIsFinite(res) ? loopRes : res;
+  }
+
+#ifdef VERBOSE
+  if (commIsMaster(s->comm)) {
+    if (it >= s->itermax && loopRes >= s->eps * s->eps) {
+      printf("%s stopped at the iteration limit of %d %s, not converged: the "
+             "residual is %e against a tolerance of %e\n",
+          solver,
+          it,
+          unit,
+          sqrt(res),
+          s->eps);
+    } else {
+      printf("%s took %d %s to reach %e\n", solver, it, unit, sqrt(res));
+    }
+  }
+#endif
+
+  return res;
 }
 
 void pressureLevelFromSolver(const Solver *s, PressureLevelType *lv)

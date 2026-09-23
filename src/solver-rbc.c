@@ -194,7 +194,7 @@ double solve(Solver *s, double *p, const double *rhs)
 #ifdef _MPI
 
   TIMESTART
-  while ((sweepRes >= epssq) && (it < itermax)) {
+  while (solveContinues(sweepRes, epssq, it, itermax)) {
     sweepRes = 0.0;
 
     for (int color = 0; color < 2; color++) {
@@ -280,7 +280,7 @@ double solve(Solver *s, double *p, const double *rhs)
   double sgnBack   = (s->bc.type[BACK] == OUTFLOW) ? -1.0 : 1.0;
 
   TIMESTART
-  while ((sweepRes >= epssq) && (it < itermax)) {
+  while (solveContinues(sweepRes, epssq, it, itermax)) {
     sweepRes = 0.0;
 
     /* Pass 0: update red cells (neighbors live in pBlack) */
@@ -452,11 +452,9 @@ double solve(Solver *s, double *p, const double *rhs)
    * path that means after the scatter above, not from the split arrays. */
   double res = pressureResidualNorm(&lv, p, rhs);
 
-#ifdef VERBOSE
-  if (commIsMaster(s->comm)) {
-    printf("Solver took %d iterations to reach %e\n", it, sqrt(res));
-  }
+  res = solveReport(s, "Solver", "iterations", it, sweepRes, res);
 
+#ifdef VERBOSE
   printProfile(s->comm, it);
 #endif
 

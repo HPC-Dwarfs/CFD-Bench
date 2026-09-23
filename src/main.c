@@ -90,6 +90,24 @@ int main(int argc, char **argv)
      * occasionally. It is a no-op where a boundary pins the pressure. */
     normalizePressure(&d);
     res = solve(&s, d.p, d.rhs);
+
+    /* A diverged solve returns a residual that is not a finite number, the same
+     * one on every rank since it is a global reduction, so every rank stops
+     * here together. Nothing after this point would be a result: the field is
+     * NaNs, and writing it out is how a diverged run used to pass for a good
+     * one. Stopping at the iteration limit is not caught here -- its iterate is
+     * finite and a bounded budget is a legitimate setup. */
+    if (!solveResidualIsFinite(res)) {
+      if (commIsMaster(&d.comm)) {
+        fprintf(stderr,
+            "The pressure solve diverged at time step %d (t = %f). Stopping "
+            "without writing any output.\n",
+            nt + 1,
+            t);
+      }
+      exit(EXIT_FAILURE);
+    }
+
     adaptUV(&d);
 
     if (commIsMaster(&d.comm)) {

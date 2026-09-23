@@ -7,6 +7,10 @@
 # Each case builds a setup file, runs it, and requires a nonzero exit status, a
 # message naming the problem, and no time step having been executed.
 #
+# One kind of case is not a refusal: a run that diverges part-way through is
+# accepted and does execute time steps, and is required instead to fail with a
+# divergence reported and no field output written. See expect_diverged.
+#
 # Environment:
 #   TOOLCHAIN  selects the binary suffix (default CLANG)
 
@@ -102,6 +106,67 @@ expect_reject "periodic boundary is refused" "$WORK/periodic.par" "PERIODIC"
 base 7 1 > "$WORK/unknown.par"
 expect_reject "unknown boundary code is refused" "$WORK/unknown.par" "unknown boundary condition"
 
+# A relaxation factor outside (0, 2), where over-relaxation diverges. omg 3.0
+# used to run to a NaN residual and exit 0. Refused in solverBaseInit, which
+# every variant passes through, so whichever variant this binary is will do.
+with_omg() {
+    base 1 1 | sed -e "s/^omg .*/omg $1/"
+}
+
+for w in 0 -1 2.0 3.0; do
+    with_omg "$w" > "$WORK/omg$w.par"
+    expect_reject "omg $w is refused" "$WORK/omg$w.par" "omg is"
+done
+
+for w in 1.7 1.8; do
+    with_omg "$w" > "$WORK/omg-ok$w.par"
+    printf -- '-- omg %s is accepted\n' "$w"
+
+    if ( cd "$WORK" && "$BIN" "$WORK/omg-ok$w.par" >/dev/null 2>&1 ); then
+        printf 'omg %s is accepted: OK\n' "$w"
+    else
+        printf 'omg %s is accepted: FAILED, the run was refused\n' "$w"
+        status=1
+    fi
+done
+
+# A run that diverges part-way through. Not a refusal -- every value in the
+# setup is accepted, and time steps do run -- so it is held to a different test:
+# a nonzero exit, a message saying the solve diverged, and no field output. A
+# fixed step far above the stability bound makes the velocity blow up within a
+# few steps, and the pressure solve is the first to see the infinity. It used to
+# run to te, exit 0, and write a VTK file of NaNs.
+expect_diverged() {
+    label=$1
+    bin=$2
+
+    rundir="$WORK/diverged-$label"
+    mkdir -p "$rundir"
+    base 1 1 | sed -e 's/^name .*/name dcavity/' -e 's/^tau .*/tau 0/' \
+        -e 's/^dt .*/dt 2.0/' -e 's/^te .*/te 40.0/' > "$rundir/diverge.par"
+
+    out=$( cd "$rundir" && "$bin" "$rundir/diverge.par" 2>&1 )
+    rc=$?
+
+    printf -- '-- a diverged run fails, %s\n' "$label"
+
+    if [ $rc -eq 0 ]; then
+        printf 'diverged run, %s: FAILED, the run exited 0\n' "$label"
+        status=1
+    elif ! printf '%s' "$out" | grep -q "diverged at time step"; then
+        printf 'diverged run, %s: FAILED, no divergence was reported\n' "$label"
+        printf '   got: %s\n' "$(printf '%s' "$out" | tail -3)"
+        status=1
+    elif ls "$rundir"/*.vtk >/dev/null 2>&1; then
+        printf 'diverged run, %s: FAILED, field output was written\n' "$label"
+        status=1
+    else
+        printf 'diverged run, %s: OK\n' "$label"
+    fi
+}
+
+expect_diverged "default build" "$BIN"
+
 # Geometry files the solver has to refuse. Each needs its own setup because the
 # geometry name is a parameter.
 with_geometry() {
@@ -172,6 +237,22 @@ uneven() {
     printf 'levels 2\n'
 }
 
+# A setup with its multigrid parameters replaced: each argument is a
+# "name value" line that takes the place of the base setup's own.
+with_mg() {
+    base 1 1 | sed -e '/^levels /d' -e '/^presmooth /d' -e '/^postsmooth /d'
+    printf 'levels 2\npresmooth 2\npostsmooth 2\n' | while read -r name value; do
+        overridden=0
+        for arg in "$@"; do
+            [ "${arg%% *}" = "$name" ] && overridden=1
+        done
+        [ $overridden -eq 0 ] && printf '%s %s\n' "$name" "$value"
+    done
+    for arg in "$@"; do
+        printf '%s\n' "$arg"
+    done
+}
+
 # Needs a build that actually constructs a hierarchy: the refusal lives where
 # the cycle is built, so a relaxation solver -- or CG with a cheap
 # preconditioner -- never reaches it and is right not to.
@@ -186,7 +267,52 @@ if make -C "$ROOT" SOLVER=mg BUILD_DIR=./build/SOLVERMG \
     BIN=$MGBIN
     expect_reject "unequal smoothing counts are refused" "$WORK/uneven-smoothing.par" \
         "must be equal"
+
+    # Values with which the cycle cannot produce a correct solve at all. Each
+    # used to run: a depth below one indexed past the hierarchy and crashed, and
+    # the others finished with exit status 0 and a residual that had not moved or
+    # was NaN.
+    for levels in 0 -1; do
+        with_mg "levels $levels" > "$WORK/levels$levels.par"
+        expect_reject "levels $levels is refused" "$WORK/levels$levels.par" \
+            "levels is $levels"
+    done
+
+    for sweeps in 0 -1; do
+        with_mg "presmooth $sweeps" "postsmooth $sweeps" > "$WORK/smooth$sweeps.par"
+        expect_reject "presmooth and postsmooth $sweeps are refused" \
+            "$WORK/smooth$sweeps.par" "must be at least 1"
+    done
+
+    # Checked before the equal-count refusal, so the message says what is wrong
+    # with the value rather than that it differs from the other one.
+    with_mg "presmooth 0" > "$WORK/presmooth0.par"
+    expect_reject "presmooth 0 alone is refused as such" "$WORK/presmooth0.par" \
+        "must be at least 1"
+
+    for w in 0 -1 2.0 3.0; do
+        with_mg "smoothOmega $w" > "$WORK/smoothOmega$w.par"
+        expect_reject "smoothOmega $w is refused" "$WORK/smoothOmega$w.par" \
+            "smoothOmega is"
+    done
+
     BIN=$saved_bin
+
+    expect_diverged "multigrid" "$MGBIN"
+
+    # And the range is open, not shut: the default and a value near the top of
+    # it are accepted, so the refusals above are about the value.
+    for w in 1.3 1.9; do
+        with_mg "smoothOmega $w" > "$WORK/smoothOmega-ok$w.par"
+        printf -- '-- smoothOmega %s is accepted\n' "$w"
+
+        if ( cd "$WORK" && "$MGBIN" "$WORK/smoothOmega-ok$w.par" >/dev/null 2>&1 ); then
+            printf 'smoothOmega %s is accepted: OK\n' "$w"
+        else
+            printf 'smoothOmega %s is accepted: FAILED, the run was refused\n' "$w"
+            status=1
+        fi
+    done
 
     rm -rf "$ROOT/build/SOLVERMG" "$MGBIN"
 else
@@ -214,6 +340,18 @@ if make -C "$ROOT" SOLVER=cg BUILD_DIR=./build/SOLVERCG \
     with_precon "bogus" > "$WORK/precon-bogus.par"
     expect_reject "an unknown preconditioner is refused" "$WORK/precon-bogus.par" \
         "Unsupported preconditioner"
+
+    # The multigrid preconditioner builds the same hierarchy, through the same
+    # multigridBuild, and is held to the same depth.
+    { with_mg "levels 0"; printf 'precon mg\n'; } > "$WORK/precon-mg-levels0.par"
+    expect_reject "levels 0 is refused under the multigrid preconditioner" \
+        "$WORK/precon-mg-levels0.par" "levels is 0"
+
+    with_omg 3.0 > "$WORK/cg-omg3.par"
+    expect_reject "omg 3.0 is refused under conjugate gradients" "$WORK/cg-omg3.par" \
+        "omg is"
+
+    expect_diverged "conjugate gradients" "$CGBIN"
 
     BIN=$saved_bin
 

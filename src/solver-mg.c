@@ -84,7 +84,7 @@ double solve(Solver *s, double *p, const double *rhs)
 
   double res = pressureResidualNorm(&desc, p, rhs);
 
-  while ((res >= epssq) && (cycles < s->itermax)) {
+  while (solveContinues(res, epssq, cycles, s->itermax)) {
     multigridCycle(mg, p, rhs);
 
     res = pressureResidualNorm(&desc, p, rhs);
@@ -92,11 +92,10 @@ double solve(Solver *s, double *p, const double *rhs)
   }
   TIMESTOP(SOLVER);
 
-#ifdef VERBOSE
-  if (commIsMaster(s->comm)) {
-    printf("Multigrid took %d cycles to reach %e\n", cycles, sqrt(res));
-  }
+  /* The loop tested the residual of the field being returned, so it is both. */
+  res = solveReport(s, "Multigrid", "cycles", cycles, res, res);
 
+#ifdef VERBOSE
   printProfile(s->comm, cycles);
 #endif
 
