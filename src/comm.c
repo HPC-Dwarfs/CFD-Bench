@@ -402,6 +402,77 @@ int commRankOfCell(CommType *c, int gi, int gj, int gk, int imax, int jmax, int 
 #define G(v, i, j, k)                                                                    \
   v[(k) * (imaxLocal + 2) * (jmaxLocal + 2) + (j) * (imaxLocal + 2) + (i)]
 
+#if defined(_MPI)
+/* Every rank's local extent and, on rank 0, where its block starts in the
+ * global grid: what assembleResult needs to place the gathered blocks. */
+static void gatherLayout(CommType *c,
+    int offset[],
+    int imaxLocalAll[],
+    int jmaxLocalAll[],
+    int kmaxLocalAll[])
+{
+  MPI_Gather(&c->imaxLocal, 1, MPI_INT, imaxLocalAll, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Gather(&c->jmaxLocal, 1, MPI_INT, jmaxLocalAll, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Gather(&c->kmaxLocal, 1, MPI_INT, kmaxLocalAll, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+  if (c->rank == 0) {
+    for (int i = 0; i < c->size; i++) {
+      int coords[NCORDS];
+      MPI_Cart_coords(c->comm, i, NDIMS, coords);
+      offset[i * NDIMS + IDIM] =
+          sum(imaxLocalAll, i, c->dims[IDIM] * c->dims[JDIM], coords[ICORD]);
+      offset[i * NDIMS + JDIM] = sum(jmaxLocalAll, i, c->dims[IDIM], coords[JCORD]);
+      offset[i * NDIMS + KDIM] = sum(kmaxLocalAll, i, 1, coords[KCORD]);
+    }
+  }
+}
+#endif
+
+void commCollectScalar(CommType *c, double *sg, double *s, int kmax, int jmax, int imax)
+{
+  int imaxLocal = c->imaxLocal;
+  int jmaxLocal = c->jmaxLocal;
+  int kmaxLocal = c->kmaxLocal;
+#if defined(_MPI)
+  int offset[c->size * NDIMS];
+  int imaxLocalAll[c->size];
+  int jmaxLocalAll[c->size];
+  int kmaxLocalAll[c->size];
+
+  gatherLayout(c, offset, imaxLocalAll, jmaxLocalAll, kmaxLocalAll);
+
+  size_t bytesize = imaxLocal * jmaxLocal * kmaxLocal * sizeof(double);
+  double *tmp     = allocate(ARRAY_ALIGNMENT, bytesize);
+  int idx         = 0;
+
+  for (int k = 1; k < kmaxLocal + 1; k++) {
+    for (int j = 1; j < jmaxLocal + 1; j++) {
+      for (int i = 1; i < imaxLocal + 1; i++) {
+        tmp[idx++] = G(s, i, j, k);
+      }
+    }
+  }
+
+  assembleResult(
+      c, tmp, sg, imaxLocalAll, jmaxLocalAll, kmaxLocalAll, offset, kmax, jmax, imax);
+
+  free(tmp);
+#else
+  (void)kmax;
+  (void)jmax;
+  (void)imax;
+  int idx = 0;
+
+  for (int k = 1; k < kmaxLocal + 1; k++) {
+    for (int j = 1; j < jmaxLocal + 1; j++) {
+      for (int i = 1; i < imaxLocal + 1; i++) {
+        sg[idx++] = G(s, i, j, k);
+      }
+    }
+  }
+#endif
+}
+
 void commCollectResult(CommType *c,
     double *ug,
     double *vg,
@@ -424,18 +495,12 @@ void commCollectResult(CommType *c,
   int jmaxLocalAll[c->size];
   int kmaxLocalAll[c->size];
 
-  MPI_Gather(&imaxLocal, 1, MPI_INT, imaxLocalAll, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Gather(&jmaxLocal, 1, MPI_INT, jmaxLocalAll, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Gather(&kmaxLocal, 1, MPI_INT, kmaxLocalAll, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  gatherLayout(c, offset, imaxLocalAll, jmaxLocalAll, kmaxLocalAll);
 
   if (c->rank == 0) {
     for (int i = 0; i < c->size; i++) {
       int coords[NCORDS];
       MPI_Cart_coords(c->comm, i, NDIMS, coords);
-      offset[i * NDIMS + IDIM] =
-          sum(imaxLocalAll, i, c->dims[IDIM] * c->dims[JDIM], coords[ICORD]);
-      offset[i * NDIMS + JDIM] = sum(jmaxLocalAll, i, c->dims[IDIM], coords[JCORD]);
-      offset[i * NDIMS + KDIM] = sum(kmaxLocalAll, i, 1, coords[KCORD]);
 
       printf("Rank: %d, Coords(k,j,i): %d %d %d, Size(k,j,i): %d %d %d, "
              "Offset(k,j,i): %d %d %d\n",

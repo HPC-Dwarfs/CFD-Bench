@@ -61,6 +61,10 @@ extern int commRankOfCell(
 extern void commFreeCommunicator(CommType *comm);
 extern void commUpdateDatatypes(
     CommType *oldcomm, CommType *newcomm, int imaxLocal, int jmaxLocal, int kmaxLocal);
+/* Gather one cell-centred field, such as the pressure or the fluid fraction, to
+ * rank 0 without any averaging. Collective: every rank must call it. */
+extern void commCollectScalar(
+    CommType *c, double *sg, double *s, int kmax, int jmax, int imax);
 extern void commCollectResult(CommType *c,
     double *ug,
     double *vg,

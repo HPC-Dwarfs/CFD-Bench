@@ -412,7 +412,10 @@ z2  7.5
 ```
 
 Positions are written to `vis_files/particles_NNNNN.vtk` as VTK polydata, which
-opens in ParaView alongside the field output.
+opens in ParaView alongside the field output. `vis_files/particles.vtk.series`
+indexes those files with the simulation time each was written at; opening the
+series file rather than the numbered files makes ParaView animate them in
+simulation time instead of by file number.
 
 Seed positions come from a hash of the particle's index and batch number rather
 than from a random number generator, so the same setup releases the same
@@ -425,6 +428,41 @@ body one face thick has fluid on both sides, so a destination-cell test sees
 nothing in the way and the particle passes straight through it. Particles that
 meet a body, or leave through a domain boundary, are removed and counted; the
 run reports how many of each at the end.
+
+## Visualisation
+
+The field file written at the end of a run, `<name>.vtk` (or `<name>-p<N>.vtk`
+with `VTK_OUTPUT_FMT=mpi`), is legacy VTK structured points at the cell centres
+and holds:
+
+| Array | Meaning |
+| --- | --- |
+| `pressure` | cell-centre pressure |
+| `velocity` | the staggered face velocities averaged to the cell centre |
+| `fluidFraction` | the cell's open volume fraction, 0 in solid and 1 in fluid; its 0.5 contour is the obstacle |
+
+`tools/paraview/animate-particles.py` puts the two outputs together: it draws the
+obstacle as the `fluidFraction` contour, outlines the domain and animates the
+particle series over it. Run it with ParaView from the directory the solver ran
+in:
+
+```sh
+tools/make-geometry.sh
+./CFD-Bench-CLANG testcases/flow/karman.par
+
+paraview --script=tools/paraview/animate-particles.py                      # GUI
+pvbatch  tools/paraview/animate-particles.py karman.vtk --save karman.avi  # movie
+pvbatch  tools/paraview/animate-particles.py karman.vtk --save wake.png --frame 40
+```
+
+The GUI form, like *View > Python Shell > Run Script* in a GUI already open,
+leaves the scene ready to press Play. Neither passes arguments, so the script
+picks the only `*.vtk` file in the working directory. On macOS `pvpython`
+and `pvbatch` are in `/Applications/ParaView-<version>.app/Contents/bin` and
+`paraview` is in `Contents/MacOS`.
+
+The obstacle comes from the end-of-run field file and so is static. That matches
+the solver, which has no moving bodies.
 
 ## Tests
 

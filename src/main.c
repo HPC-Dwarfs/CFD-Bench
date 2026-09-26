@@ -153,10 +153,11 @@ int main(int argc, char **argv)
 
   timeStart = getTimeStamp();
 #ifdef _VTK_WRITER_MPI
-  VtkOptions opts = { .grid = s.grid, .comm = s.comm };
+  VtkOptions opts = { .grid = s.grid, .comm = *s.comm };
   vtkOpen(&opts, s.problem);
   vtkScalar(&opts, "pressure", d.p);
   vtkVector(&opts, "velocity", (VtkVector) { d.u, d.v, d.w });
+  vtkScalar(&opts, "fluidFraction", d.Lambda);
   vtkClose(&opts);
 #else
   if (fp != NULL)
@@ -166,6 +167,7 @@ int main(int argc, char **argv)
   double *ug;
   double *vg;
   double *wg;
+  double *lg;
 
   if (commIsMaster(s.comm)) {
     size_t bytesize = s.grid->imax * s.grid->jmax * s.grid->kmax * sizeof(double);
@@ -174,6 +176,7 @@ int main(int argc, char **argv)
     ug              = allocate(ARRAY_ALIGNMENT, bytesize);
     vg              = allocate(ARRAY_ALIGNMENT, bytesize);
     wg              = allocate(ARRAY_ALIGNMENT, bytesize);
+    lg              = allocate(ARRAY_ALIGNMENT, bytesize);
   }
 
   commCollectResult(s.comm,
@@ -188,12 +191,16 @@ int main(int argc, char **argv)
       s.grid->kmax,
       s.grid->jmax,
       s.grid->imax);
+  /* The body as the solver sees it, 0 in solid and 1 in open fluid, so that a
+   * viewer can draw the obstacle as the 0.5 contour of this field. */
+  commCollectScalar(s.comm, lg, d.Lambda, s.grid->kmax, s.grid->jmax, s.grid->imax);
 
   if (commIsMaster(s.comm)) {
     VtkOptions opts = { .grid = s.grid };
     vtkOpen(&opts, s.problem);
     vtkScalar(&opts, "pressure", pg);
     vtkVector(&opts, "velocity", (VtkVector) { ug, vg, wg });
+    vtkScalar(&opts, "fluidFraction", lg);
     vtkClose(&opts);
   }
 

@@ -37,6 +37,10 @@ typedef struct {
   long batch;
   int writeIndex;
 
+  /* the time of every file written so far, rank 0 only, for the series index */
+  double *seriesTimes;
+  int seriesCapacity;
+
   ParticleType *pool;
   int count;
   int capacity;

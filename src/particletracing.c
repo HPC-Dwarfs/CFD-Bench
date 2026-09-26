@@ -548,7 +548,50 @@ void particleTracerMigrate(ParticleTracerType *t, Discretization *d)
 
 /* ---------------------------------------------------------------------- */
 
-static void writeParticles(ParticleTracerType *t, Discretization *d)
+/* A ParaView file-series index next to the particle files. The legacy reader
+ * would otherwise number the files 0, 1, 2, ...; opening this file instead
+ * animates them in simulation time, so they line up with anything else keyed
+ * to it. Rewritten whole after every file, so it is complete if a run stops. */
+static void writeSeries(ParticleTracerType *t, double time)
+{
+  if (t->writeIndex >= t->seriesCapacity) {
+    int capacity = t->seriesCapacity > 0 ? 2 * t->seriesCapacity : 64;
+    double *grown = realloc(t->seriesTimes, (size_t)capacity * sizeof(double));
+
+    if (grown == NULL) {
+      fprintf(stderr, "particle tracing: cannot record the time of file %d\n",
+          t->writeIndex);
+      return;
+    }
+    t->seriesTimes    = grown;
+    t->seriesCapacity = capacity;
+  }
+  t->seriesTimes[t->writeIndex] = time;
+
+  char path[256];
+  snprintf(path, sizeof(path), "%s/particles.vtk.series", PARTICLE_DIR);
+
+  FILE *fp = fopen(path, "w");
+
+  if (fp == NULL) {
+    fprintf(stderr, "particle tracing: cannot write %s\n", path);
+    return;
+  }
+
+  fprintf(fp, "{\n  \"file-series-version\" : \"1.0\",\n  \"files\" : [\n");
+  for (int i = 0; i <= t->writeIndex; i++) {
+    fprintf(fp,
+        "    { \"name\" : \"particles_%05d.vtk\", \"time\" : %.10g }%s\n",
+        i,
+        t->seriesTimes[i],
+        i < t->writeIndex ? "," : "");
+  }
+  fprintf(fp, "  ]\n}\n");
+
+  fclose(fp);
+}
+
+static void writeParticles(ParticleTracerType *t, Discretization *d, double time)
 {
   int rank          = d->comm.rank;
   int size          = d->comm.size;
@@ -620,6 +663,8 @@ static void writeParticles(ParticleTracerType *t, Discretization *d)
 
       fclose(fp);
     }
+
+    writeSeries(t, time);
   }
 
 #if defined(_MPI)
@@ -704,7 +749,7 @@ void particleTracerStep(ParticleTracerType *t, Discretization *d, double time)
   particleTracerMigrate(t, d);
 
   if (t->writePeriod > 0.0 && (time - t->lastWrite) >= t->writePeriod) {
-    writeParticles(t, d);
+    writeParticles(t, d, time);
     t->lastWrite = time;
   }
 }
@@ -752,6 +797,7 @@ void particleTracerFinalize(ParticleTracerType *t, Discretization *d)
   }
 
   free(t->pool);
+  free(t->seriesTimes);
   t->pool     = NULL;
   t->capacity = 0;
   t->count    = 0;

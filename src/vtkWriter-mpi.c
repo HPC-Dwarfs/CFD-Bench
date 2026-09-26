@@ -64,6 +64,9 @@ void vtkOpen(VtkOptions *o, char *problem)
   snprintf(filename, 50, "%s-p%d.vtk", problem, o->comm.size);
   MPI_File_open(
       o->comm.comm, filename, MPI_MODE_WRONLY | MPI_MODE_CREATE, MPI_INFO_NULL, &o->fh);
+  /* Every section is placed at the current end of the file, so a file left by
+   * an earlier run has to go first or this one is appended after it. */
+  MPI_File_set_size(o->fh, 0);
 
   if (commIsMaster(&o->comm)) {
     printf("Writing VTK output for %s\n", problem);
@@ -82,7 +85,7 @@ void vtkScalar(VtkOptions *o, char *name, double *s)
   char header[100];
   char *cursor = header;
 
-  cursor += sprintf(cursor, "SCALARS %s double\n", name);
+  cursor += sprintf(cursor, "SCALARS %s double 1\nLOOKUP_TABLE default\n", name);
 
   if (commIsMaster(&o->comm)) {
     MPI_File_write(o->fh, header, (int)strlen(header), MPI_CHAR, MPI_STATUS_IGNORE);
